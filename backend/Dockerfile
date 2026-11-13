@@ -14,3 +14,4 @@ RUN wget -q https://github.com/CrowCpp/Crow/releases/latest/download/crow_all.h 
 
 WORKDIR /app
 COPY . /app
+EXPOSE 9091

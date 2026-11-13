@@ -7,7 +7,7 @@
 ## Architecture Rules
 - Language: C++17
 - Build System: CMake (`backend/CMakeLists.txt`)
-- Web Framework: Crow (`crow_all.h`) REST API on port 8080
+- Web Framework: Crow (`crow_all.h`) REST API on port 9091
 - Topography Engine: GDAL (`libgdal-dev`) handling South Polar Stereographic GeoTIFFs
 - HTTP Client: `libcurl` for NASA JPL Horizons API queries
 - JSON Library: `nlohmann/json`
