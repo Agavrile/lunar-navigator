@@ -1,0 +1,18 @@
+# C++ Build & IDE
+backend/build/
+*.o
+*.out
+*.exe
+.vscode/
+.idea/
+
+# Frontend / Node
+frontend/node_modules/
+frontend/dist/
+.env
+
+# NASA LOLA Elevation Datasets (Keep on server only)
+*.tif
+*.tiff
+*.img
+*.jp2
