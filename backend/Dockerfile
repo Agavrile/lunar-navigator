@@ -14,4 +14,9 @@ RUN wget -q https://github.com/CrowCpp/Crow/releases/latest/download/crow_all.h 
 
 WORKDIR /app
 COPY . /app
+
+RUN mkdir -p build && cd build && cmake .. && make -j$(nproc)
+
 EXPOSE 9091
+
+CMD ["./build/lunar_api"]
