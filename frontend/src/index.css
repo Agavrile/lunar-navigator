@@ -76,7 +76,7 @@ html, body, #root {
   border: 1px solid #555555;
   padding: 10px 12px;
   font-family: Georgia, "Times New Roman", Times, serif;
-  max-width: 350px;
+  max-width: 440px;
   pointer-events: none;
   border-radius: 0;
 }
@@ -167,6 +167,15 @@ html, body, #root {
   padding: 10px 12px 8px;
   border-bottom: 1px solid #555555;
   flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.panel-header-content {
+  flex: 1;
+  min-width: 0;
 }
 
 .panel-title {
@@ -197,6 +206,17 @@ html, body, #root {
 
 .source-live    { color: #00CC00; }
 .source-offline { color: #FFAA00; }
+
+.mission-logo {
+  height: 42px;
+  width: auto;
+  max-width: 90px;
+  object-fit: contain;
+  border: 1px solid #555555;
+  background: #000000;
+  padding: 2px;
+  flex-shrink: 0;
+}
 
 /* ---- Section ---- */
 .panel-section {
@@ -504,7 +524,7 @@ html, body, #root {
   .map-vector-legend {
     padding: 6px 8px;
     font-size: 9px;
-    max-width: 280px;
+    max-width: 300px;
     bottom: 6px;
     left: 6px;
   }

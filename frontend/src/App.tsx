@@ -31,6 +31,7 @@ const BANDS: { key: FrequencyBand; label: string }[] = [
   { key: 'KA_BAND', label: 'KA-BAND (26.0 GHz)' },
 ];
 
+/* Official IAU Planetary Nomenclature coordinates & radii */
 interface CraterFeature {
   name: string;
   lat: number;
@@ -38,13 +39,12 @@ interface CraterFeature {
   radiusM: number;
 }
 
-const CRATERS: CraterFeature[] = [
-  { name: 'Shackleton',       lat: -89.9, lon:   0.0, radiusM: 10500 },
-  { name: 'Haworth',          lat: -87.5, lon: 340.5, radiusM: 25000 },
-  { name: 'Shoemaker',        lat: -88.1, lon:  45.0, radiusM: 25000 },
-  { name: 'Faustini',         lat: -87.3, lon:  77.0, radiusM: 20000 },
-  { name: 'Cabeus',           lat: -84.9, lon: 324.5, radiusM: 48000 },
-  { name: 'Malapert Massif',  lat: -86.0, lon:   2.7, radiusM: 12000 },
+const IAU_CRATERS: CraterFeature[] = [
+  { name: 'Shackleton', lat: -89.67, lon: 129.78, radiusM: 10460 },
+  { name: 'Haworth',    lat: -87.45, lon: 354.83, radiusM: 25710 },
+  { name: 'Shoemaker',  lat: -88.14, lon:  45.91, radiusM: 25910 },
+  { name: 'Faustini',   lat: -87.18, lon:  84.31, radiusM: 21240 },
+  { name: 'Cabeus',     lat: -85.33, lon: 317.87, radiusM: 50290 },
 ];
 
 const MOON_RADIUS = 1_737_400; // metres
@@ -149,7 +149,7 @@ function azElToCartesian(
 }
 
 /* ============================================================
-   Draw latitude rings & meridians
+   Draw latitude rings & meridians with exact Artemis zone labels
    ============================================================ */
 
 function addGraticule(viewer: Cesium.Viewer): void {
@@ -164,24 +164,41 @@ function addGraticule(viewer: Cesium.Viewer): void {
         positions: pts,
         width: 1.0,
         material: new Cesium.ColorMaterialProperty(
-          Cesium.Color.fromCssColorString('#555555'),
+          Cesium.Color.fromCssColorString(lat === -85 ? '#777777' : '#555555'),
         ),
         clampToGround: false,
       },
     });
 
-    // Label at lon=0
+    // Label along 0° meridian with radial scale
+    let labelText = `${Math.abs(lat)}°S`;
+    let isArtemisZone = false;
+
+    if (lat === -89) {
+      labelText = '89°S (30 km)';
+    } else if (lat === -87) {
+      labelText = '87°S (91 km)';
+    } else if (lat === -85) {
+      labelText = '85°S · 152 km (ARTEMIS SOUTH POLE ZONE)';
+      isArtemisZone = true;
+    }
+
     viewer.entities.add({
       position: moonCartesian(lat, 0, 1800),
       label: {
-        text: `${lat}°`,
-        font: '10px Georgia, "Times New Roman", Times, serif',
-        fillColor: Cesium.Color.fromCssColorString('#888888'),
+        text: labelText,
+        font: isArtemisZone
+          ? 'bold 11px Georgia, "Times New Roman", Times, serif'
+          : '10px Georgia, "Times New Roman", Times, serif',
+        fillColor: isArtemisZone
+          ? Cesium.Color.fromCssColorString('#E0E0E0')
+          : Cesium.Color.fromCssColorString('#888888'),
         outlineColor: Cesium.Color.BLACK,
-        outlineWidth: 1,
+        outlineWidth: 2,
         style: Cesium.LabelStyle.FILL_AND_OUTLINE,
         verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-        pixelOffset: new Cesium.Cartesian2(0, -4),
+        horizontalOrigin: Cesium.HorizontalOrigin.LEFT,
+        pixelOffset: new Cesium.Cartesian2(4, -3),
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
       },
     });
@@ -219,13 +236,15 @@ function addGraticule(viewer: Cesium.Viewer): void {
 }
 
 /* ============================================================
-   Draw crater rims & labels
+   Draw IAU Crater Rims and Malapert Massif Elevation Landmark
    ============================================================ */
 
 function addCraters(viewer: Cesium.Viewer): void {
-  for (const c of CRATERS) {
-    // 1.5px gray circle for crater rim
+  // 1. IAU Crater Rims and Labels
+  for (const c of IAU_CRATERS) {
+    // 1.5px gray circle for IAU crater rim
     viewer.entities.add({
+      name: `${c.name} Crater Rim`,
       polyline: {
         positions: computeCirclePositions(c.lat, c.lon, c.radiusM, 64),
         width: 1.5,
@@ -236,8 +255,9 @@ function addCraters(viewer: Cesium.Viewer): void {
       },
     });
 
-    // Crater label
+    // Crater name label
     viewer.entities.add({
+      name: `${c.name} Label`,
       position: moonCartesian(c.lat, c.lon, 2500),
       label: {
         text: c.name,
@@ -252,6 +272,30 @@ function addCraters(viewer: Cesium.Viewer): void {
       },
     });
   }
+
+  // 2. Malapert Massif (Elevated Mountain Massif Peak)
+  viewer.entities.add({
+    name: 'Malapert Massif Peak',
+    position: moonCartesian(-86.0, 2.7, 5000),
+    point: {
+      pixelSize: 6,
+      color: Cesium.Color.fromCssColorString('#CCCCCC'),
+      outlineColor: Cesium.Color.BLACK,
+      outlineWidth: 1,
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    },
+    label: {
+      text: '▲ Malapert Massif',
+      font: '11px Georgia, "Times New Roman", Times, serif',
+      fillColor: Cesium.Color.fromCssColorString('#CCCCCC'),
+      outlineColor: Cesium.Color.BLACK,
+      outlineWidth: 2,
+      style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+      verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+      pixelOffset: new Cesium.Cartesian2(0, -6),
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    },
+  });
 }
 
 /* ============================================================
@@ -603,7 +647,7 @@ export default function App(): React.ReactElement {
           </div>
           <div className="legend-item">
             <span className="legend-swatch ring-gray">○</span>
-            <span className="legend-label">#888888: Major South Pole Crater Rims &amp; Lat Grid</span>
+            <span className="legend-label">#888888: IAU Crater Rims &amp; Polar Grid (85°S–90°S Artemis Zone, 152 km Radius)</span>
           </div>
         </div>
       </div>
@@ -611,15 +655,25 @@ export default function App(): React.ReactElement {
       {/* ---- Right: Control & Telemetry Panel ---- */}
       <div className="control-panel">
 
-        {/* Header */}
+        {/* Header with Project/Team Logo */}
         <div className="panel-header">
-          <div className="panel-title">Lunar South Pole Navigator</div>
-          <div className="panel-subtitle">NASA Space Apps Challenge — Landing Site Analysis</div>
-          {result && (
-            <span className={`source-indicator ${result.source === 'LIVE' ? 'source-live' : 'source-offline'}`}>
-              SOURCE: {result.source === 'LIVE' ? 'LIVE C++ ENGINE' : 'OFFLINE FALLBACK'}
-            </span>
-          )}
+          <div className="panel-header-content">
+            <div className="panel-title">Lunar South Pole Navigator</div>
+            <div className="panel-subtitle">NASA Space Apps Challenge — Landing Site Analysis</div>
+            {result && (
+              <span className={`source-indicator ${result.source === 'LIVE' ? 'source-live' : 'source-offline'}`}>
+                SOURCE: {result.source === 'LIVE' ? 'LIVE C++ ENGINE' : 'OFFLINE FALLBACK'}
+              </span>
+            )}
+          </div>
+          <img
+            src="/logo.png"
+            alt="Mission Logo"
+            className="mission-logo"
+            onError={(e) => {
+              e.currentTarget.style.display = 'none';
+            }}
+          />
         </div>
 
         {/* Preset Sites */}

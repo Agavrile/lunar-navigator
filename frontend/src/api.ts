@@ -194,8 +194,9 @@ export async function analyzeRequest(req: AnalyzeRequest): Promise<AnalyzeRespon
     const data = await res.json() as AnalyzeResponse;
     data.source = 'LIVE';
     return data;
-  } catch {
+  } catch (err) {
     clearTimeout(timeoutId);
+    console.warn('[LunarAPI] Fetch error, falling back to offline calculator:', err);
     return computeFallback(req);
   }
 }
