@@ -18,9 +18,10 @@ include_directories(
     ${GDAL_INCLUDE_DIRS}
 )
 
-# Executable target definition
+# Executable target definition: lunar_api
 add_executable(lunar_api
     main.cpp
+    gdal_parser.cpp
 )
 
 target_include_directories(lunar_api PRIVATE
@@ -31,8 +32,37 @@ target_include_directories(lunar_api PRIVATE
     ${GDAL_INCLUDE_DIRS}
 )
 
-# Link against gdal, curl, and pthread
+# Link lunar_api against gdal, curl, and pthread
 target_link_libraries(lunar_api PRIVATE
+    gdal
+    curl
+    pthread
+    ${GDAL_LIBRARIES}
+    ${CURL_LIBRARIES}
+)
+
+# Standalone CLI test executable: test_gdal
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test_gdal.cpp")
+    add_executable(test_gdal
+        test_gdal.cpp
+        gdal_parser.cpp
+    )
+else()
+    add_executable(test_gdal
+        gdal_parser.cpp
+    )
+    target_compile_definitions(test_gdal PRIVATE BUILD_TEST_GDAL)
+endif()
+
+target_include_directories(test_gdal PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    /usr/local/include
+    /usr/include
+    ${CURL_INCLUDE_DIRS}
+    ${GDAL_INCLUDE_DIRS}
+)
+
+target_link_libraries(test_gdal PRIVATE
     gdal
     curl
     pthread
