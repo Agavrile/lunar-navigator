@@ -5,7 +5,7 @@ import { analyzeDebounced, analyzeRequest } from './api';
 import type { AnalyzeResponse, FrequencyBand, OverallComms, DteStatus, PowerStatus } from './api';
 
 /* ============================================================
-   Constants
+   Constants & Features
    ============================================================ */
 
 const TIME_START = new Date('2026-11-14T00:00:00Z');
@@ -31,13 +31,20 @@ const BANDS: { key: FrequencyBand; label: string }[] = [
   { key: 'KA_BAND', label: 'KA-BAND (26.0 GHz)' },
 ];
 
-/* South Pole landmarks */
-const LANDMARKS = [
-  { name: 'Shackleton',   lat: -89.9, lon:   0.0 },
-  { name: 'Haworth',      lat: -87.4, lon: 340.5 },
-  { name: 'Malapert',     lat: -86.0, lon:   2.7 },
-  { name: 'Cabeus',       lat: -84.9, lon: 316.0 },
-  { name: 'de Gerlache',  lat: -88.5, lon:  30.0 },
+interface CraterFeature {
+  name: string;
+  lat: number;
+  lon: number;
+  radiusM: number;
+}
+
+const CRATERS: CraterFeature[] = [
+  { name: 'Shackleton',       lat: -89.9, lon:   0.0, radiusM: 10500 },
+  { name: 'Haworth',          lat: -87.5, lon: 340.5, radiusM: 25000 },
+  { name: 'Shoemaker',        lat: -88.1, lon:  45.0, radiusM: 25000 },
+  { name: 'Faustini',         lat: -87.3, lon:  77.0, radiusM: 20000 },
+  { name: 'Cabeus',           lat: -84.9, lon: 324.5, radiusM: 48000 },
+  { name: 'Malapert Massif',  lat: -86.0, lon:   2.7, radiusM: 12000 },
 ];
 
 const MOON_RADIUS = 1_737_400; // metres
@@ -90,6 +97,8 @@ function fmt(n: number, dec = 2): string {
    Cesium utilities
    ============================================================ */
 
+function toRad(d: number): number { return (d * Math.PI) / 180; }
+
 function moonCartesian(lat: number, lon: number, alt = 0): Cesium.Cartesian3 {
   return Cesium.Cartesian3.fromRadians(
     toRad(lon), toRad(lat), alt,
@@ -97,7 +106,24 @@ function moonCartesian(lat: number, lon: number, alt = 0): Cesium.Cartesian3 {
   );
 }
 
-function toRad(d: number): number { return (d * Math.PI) / 180; }
+function computeCirclePositions(centerLat: number, centerLon: number, radiusM: number, segments = 64): Cesium.Cartesian3[] {
+  const pts: Cesium.Cartesian3[] = [];
+  const lat0 = toRad(centerLat);
+  const lon0 = toRad(centerLon);
+  const d = radiusM / MOON_RADIUS;
+
+  for (let i = 0; i <= segments; i++) {
+    const bearing = (i * 2 * Math.PI) / segments;
+    const sinLat = Math.sin(lat0) * Math.cos(d) + Math.cos(lat0) * Math.sin(d) * Math.cos(bearing);
+    const lat = Math.asin(Math.max(-1, Math.min(1, sinLat)));
+    const y = Math.sin(bearing) * Math.sin(d) * Math.cos(lat0);
+    const x = Math.cos(d) - Math.sin(lat0) * Math.sin(lat);
+    const lon = lon0 + Math.atan2(y, x);
+
+    pts.push(Cesium.Cartesian3.fromRadians(lon, lat, 200, Cesium.Ellipsoid.MOON));
+  }
+  return pts;
+}
 
 function azElToCartesian(
   originLat: number,
@@ -130,15 +156,15 @@ function addGraticule(viewer: Cesium.Viewer): void {
   const latLines = [-89, -88, -87, -86, -85];
   for (const lat of latLines) {
     const pts: Cesium.Cartesian3[] = [];
-    for (let lon = 0; lon <= 360; lon += 2) {
+    for (let lon = 0; lon <= 360; lon += 1) {
       pts.push(moonCartesian(lat, lon, 100));
     }
     viewer.entities.add({
       polyline: {
         positions: pts,
-        width: 0.5,
+        width: 1.0,
         material: new Cesium.ColorMaterialProperty(
-          Cesium.Color.fromCssColorString('#444444'),
+          Cesium.Color.fromCssColorString('#555555'),
         ),
         clampToGround: false,
       },
@@ -146,10 +172,10 @@ function addGraticule(viewer: Cesium.Viewer): void {
 
     // Label at lon=0
     viewer.entities.add({
-      position: moonCartesian(lat, 0, 2000),
+      position: moonCartesian(lat, 0, 1800),
       label: {
         text: `${lat}°`,
-        font: '10px Georgia, serif',
+        font: '10px Georgia, "Times New Roman", Times, serif',
         fillColor: Cesium.Color.fromCssColorString('#888888'),
         outlineColor: Cesium.Color.BLACK,
         outlineWidth: 1,
@@ -178,10 +204,10 @@ function addGraticule(viewer: Cesium.Viewer): void {
       },
     });
     viewer.entities.add({
-      position: moonCartesian(-84.5, lon, 2000),
+      position: moonCartesian(-84.2, lon, 2000),
       label: {
         text: `${lon}°`,
-        font: '9px Georgia, serif',
+        font: '9px Georgia, "Times New Roman", Times, serif',
         fillColor: Cesium.Color.fromCssColorString('#666666'),
         outlineColor: Cesium.Color.BLACK,
         outlineWidth: 1,
@@ -193,21 +219,35 @@ function addGraticule(viewer: Cesium.Viewer): void {
 }
 
 /* ============================================================
-   Draw landmark labels
+   Draw crater rims & labels
    ============================================================ */
 
-function addLandmarkLabels(viewer: Cesium.Viewer): void {
-  for (const lm of LANDMARKS) {
+function addCraters(viewer: Cesium.Viewer): void {
+  for (const c of CRATERS) {
+    // 1.5px gray circle for crater rim
     viewer.entities.add({
-      position: moonCartesian(lm.lat, lm.lon, 3000),
+      polyline: {
+        positions: computeCirclePositions(c.lat, c.lon, c.radiusM, 64),
+        width: 1.5,
+        material: new Cesium.ColorMaterialProperty(
+          Cesium.Color.fromCssColorString('#888888'),
+        ),
+        clampToGround: false,
+      },
+    });
+
+    // Crater label
+    viewer.entities.add({
+      position: moonCartesian(c.lat, c.lon, 2500),
       label: {
-        text: lm.name,
-        font: '11px Georgia, serif',
+        text: c.name,
+        font: '11px Georgia, "Times New Roman", Times, serif',
         fillColor: Cesium.Color.fromCssColorString('#CCCCCC'),
         outlineColor: Cesium.Color.BLACK,
         outlineWidth: 2,
         style: Cesium.LabelStyle.FILL_AND_OUTLINE,
         verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        pixelOffset: new Cesium.Cartesian2(0, -6),
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
       },
     });
@@ -226,11 +266,12 @@ export default function App(): React.ReactElement {
   const markerRef      = useRef<Cesium.Entity | null>(null);
   const sunRayRef      = useRef<Cesium.Entity | null>(null);
   const commsRayRef    = useRef<Cesium.Entity[]>([]);
-  const relayRayRef    = useRef<Cesium.Entity | null>(null);
 
   /* State */
   const [lat, setLat]   = useState<number>(-89.9);
   const [lon, setLon]   = useState<number>(0.0);
+  const [inputLat, setInputLat] = useState<string>('-89.9000');
+  const [inputLon, setInputLon] = useState<string>('0.0000');
   const [band, setBand] = useState<FrequencyBand>('X_BAND');
   const [timeHours, setTimeHours] = useState<number>(0);
   const [playing, setPlaying]     = useState<boolean>(false);
@@ -241,6 +282,20 @@ export default function App(): React.ReactElement {
 
   /* Derived UTC */
   const utcTime = new Date(TIME_START.getTime() + timeHours * 3_600_000).toISOString();
+
+  /* ---- Reset Camera to Pole View ---- */
+  const handleResetPoleView = () => {
+    if (!viewerRef.current) return;
+    viewerRef.current.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(0.0, -90.0, 420000, Cesium.Ellipsoid.MOON),
+      orientation: {
+        heading: Cesium.Math.toRadians(0),
+        pitch: Cesium.Math.toRadians(-90),
+        roll: 0,
+      },
+      duration: 1,
+    });
+  };
 
   /* ---- Init Cesium ---- */
   useEffect(() => {
@@ -268,10 +323,27 @@ export default function App(): React.ReactElement {
       skyAtmosphere: false as unknown as Cesium.SkyAtmosphere,
     });
 
-    viewer.scene.globe.baseColor   = Cesium.Color.fromCssColorString('#141414');
-    viewer.scene.backgroundColor   = Cesium.Color.BLACK;
+    viewer.scene.globe.show = true;
+    viewer.scene.globe.enableLighting = false;
+    if (viewer.scene.skyAtmosphere) {
+      viewer.scene.skyAtmosphere.show = false;
+    }
+    if (viewer.scene.fog) {
+      viewer.scene.fog.enabled = false;
+    }
+    viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#2B2B2B');
+    viewer.scene.backgroundColor = Cesium.Color.BLACK;
     viewer.scene.globe.showGroundAtmosphere = false;
-    viewer.scene.sun               = undefined as unknown as Cesium.Sun;
+    viewer.scene.sun = undefined as unknown as Cesium.Sun;
+
+    // Real NASA Moon Trek LRO WAC Global Mosaic
+    const lunarImagery = new Cesium.UrlTemplateImageryProvider({
+      url: 'https://trek.nasa.gov/tiles/Moon/EQ/LRO_WAC_Mosaic_Global_303ppd_v02/1.0.0/default/default028mm/{z}/{y}/{x}.jpg',
+      tilingScheme: new Cesium.GeographicTilingScheme(),
+      maximumLevel: 7,
+      credit: 'NASA LRO WAC',
+    });
+    viewer.imageryLayers.addImageryProvider(lunarImagery);
 
     // Try loading ion tileset if token present
     if (ionToken) {
@@ -281,34 +353,34 @@ export default function App(): React.ReactElement {
     }
 
     addGraticule(viewer);
-    addLandmarkLabels(viewer);
+    addCraters(viewer);
 
-    // Fly camera to lunar south pole
-    viewer.camera.flyTo({
-      destination: Cesium.Cartesian3.fromRadians(
-        toRad(0), toRad(-89.0), MOON_RADIUS * 0.08,
-        Cesium.Ellipsoid.MOON,
-      ),
+    // Initial camera: clean top-down polar view directly at South Pole
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(0.0, -90.0, 420000, Cesium.Ellipsoid.MOON),
       orientation: {
         heading: Cesium.Math.toRadians(0),
-        pitch:   Cesium.Math.toRadians(-75),
-        roll:    0,
+        pitch: Cesium.Math.toRadians(-90),
+        roll: 0,
       },
-      duration: 0,
     });
 
     // Click handler
     const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
     handler.setInputAction((event: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
-      const ray      = viewer.camera.getPickRay(event.position);
+      const ray = viewer.camera.getPickRay(event.position);
       if (!ray) return;
-      const pickPos  = viewer.scene.globe.pick(ray, viewer.scene);
+      const pickPos = viewer.scene.globe.pick(ray, viewer.scene);
       if (!pickPos) return;
       const carto = Cesium.Ellipsoid.MOON.cartesianToCartographic(pickPos);
       const pickedLat = Cesium.Math.toDegrees(carto.latitude);
       const pickedLon = ((Cesium.Math.toDegrees(carto.longitude)) + 360) % 360;
-      setLat(parseFloat(pickedLat.toFixed(4)));
-      setLon(parseFloat(pickedLon.toFixed(4)));
+      const roundLat = parseFloat(pickedLat.toFixed(4));
+      const roundLon = parseFloat(pickedLon.toFixed(4));
+      setLat(roundLat);
+      setLon(roundLon);
+      setInputLat(roundLat.toFixed(4));
+      setInputLon(roundLon.toFixed(4));
       setActivePreset(-1);
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
@@ -326,7 +398,7 @@ export default function App(): React.ReactElement {
     analyzeDebounced({ lat, lon, utc_time: utcTime, frequency_band: band }, setResult, 250);
   }, [lat, lon, utcTime, band]);
 
-  /* ---- Immediate fetch on preset / band click ---- */
+  /* ---- Immediate fetch on preset / band / coordinate submit ---- */
   const fetchImmediate = useCallback(
     (newLat: number, newLon: number, newBand: FrequencyBand, newTime: string) => {
       analyzeRequest({ lat: newLat, lon: newLon, utc_time: newTime, frequency_band: newBand })
@@ -342,13 +414,12 @@ export default function App(): React.ReactElement {
     if (!viewer || !result) return;
 
     /* Remove old entities */
-    if (markerRef.current)   viewer.entities.remove(markerRef.current);
-    if (sunRayRef.current)   viewer.entities.remove(sunRayRef.current);
-    if (relayRayRef.current) viewer.entities.remove(relayRayRef.current);
+    if (markerRef.current) viewer.entities.remove(markerRef.current);
+    if (sunRayRef.current) viewer.entities.remove(sunRayRef.current);
     commsRayRef.current.forEach((e) => viewer.entities.remove(e));
     commsRayRef.current = [];
 
-    /* Landing site marker — white ring + red fill */
+    /* Landing site marker — white outline + red center target marker */
     const markerPos = moonCartesian(lat, lon, 50);
     markerRef.current = viewer.entities.add({
       position: markerPos,
@@ -361,18 +432,18 @@ export default function App(): React.ReactElement {
       },
     });
 
-    const RAY_LENGTH = MOON_RADIUS * 0.03; // ~52 km
+    const RAY_LENGTH = MOON_RADIUS * 0.04; // ~70 km
 
-    /* Sun ray */
+    /* Sun ray (#FFFF00) */
     const isShadow = result.sun.power_status === 'CRITICAL_SHADOW';
     const sunLen   = isShadow ? RAY_LENGTH * 0.3 : RAY_LENGTH;
     const sunEnd   = azElToCartesian(lat, lon, result.sun.azimuth_deg, result.sun.elevation_deg, sunLen);
     sunRayRef.current = viewer.entities.add({
       polyline: {
         positions: [markerPos, sunEnd],
-        width: isShadow ? 1 : 2,
+        width: isShadow ? 1.5 : 2.5,
         material: new Cesium.ColorMaterialProperty(
-          Cesium.Color.fromCssColorString('#FFFF00').withAlpha(isShadow ? 0.4 : 1.0),
+          Cesium.Color.fromCssColorString('#FFFF00').withAlpha(isShadow ? 0.35 : 1.0),
         ),
         clampToGround: false,
       },
@@ -386,7 +457,7 @@ export default function App(): React.ReactElement {
         viewer.entities.add({
           polyline: {
             positions: [markerPos, earthEnd],
-            width: 2,
+            width: 2.5,
             material: new Cesium.ColorMaterialProperty(Cesium.Color.fromCssColorString('#00CC00')),
             clampToGround: false,
           },
@@ -400,7 +471,7 @@ export default function App(): React.ReactElement {
         viewer.entities.add({
           polyline: {
             positions: [markerPos, relayMidPt, relayEndPt],
-            width: 2,
+            width: 2.5,
             material: new Cesium.PolylineDashMaterialProperty({
               color: Cesium.Color.fromCssColorString('#FFAA00'),
               dashLength: 16,
@@ -410,13 +481,13 @@ export default function App(): React.ReactElement {
         }),
       );
     } else {
-      // COMPLETE_BLACKOUT — short red stub
-      const blockedEnd = azElToCartesian(lat, lon, result.earth.azimuth_deg, result.earth.elevation_deg, RAY_LENGTH * 0.2);
+      // COMPLETE_BLACKOUT — short red blocked line
+      const blockedEnd = azElToCartesian(lat, lon, result.earth.azimuth_deg, result.earth.elevation_deg, RAY_LENGTH * 0.25);
       commsRayRef.current.push(
         viewer.entities.add({
           polyline: {
             positions: [markerPos, blockedEnd],
-            width: 2,
+            width: 2.5,
             material: new Cesium.ColorMaterialProperty(Cesium.Color.fromCssColorString('#FF3333')),
             clampToGround: false,
           },
@@ -448,6 +519,8 @@ export default function App(): React.ReactElement {
     const p = PRESETS[idx];
     setLat(p.lat);
     setLon(p.lon);
+    setInputLat(p.lat.toFixed(4));
+    setInputLon(p.lon.toFixed(4));
     setActivePreset(idx);
     fetchImmediate(p.lat, p.lon, band, utcTime);
   };
@@ -463,7 +536,29 @@ export default function App(): React.ReactElement {
     setPlaying(false);
   };
 
+  const handleStepTime = (deltaHours: number) => {
+    setPlaying(false);
+    setTimeHours((h) => Math.max(0, Math.min(TOTAL_HOURS, h + deltaHours)));
+  };
+
   const togglePlay = () => setPlaying((p) => !p);
+
+  const handleApplyCoords = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const parsedLat = parseFloat(inputLat);
+    const parsedLon = parseFloat(inputLon);
+    if (isNaN(parsedLat) || isNaN(parsedLon)) return;
+    const clampedLat = Math.max(-90, Math.min(90, parsedLat));
+    const normalizedLon = ((parsedLon % 360) + 360) % 360;
+    const roundLat = parseFloat(clampedLat.toFixed(4));
+    const roundLon = parseFloat(normalizedLon.toFixed(4));
+    setLat(roundLat);
+    setLon(roundLon);
+    setInputLat(roundLat.toFixed(4));
+    setInputLon(roundLon.toFixed(4));
+    setActivePreset(-1);
+    fetchImmediate(roundLat, roundLon, band, utcTime);
+  };
 
   /* ============================================================
      Render
@@ -472,7 +567,45 @@ export default function App(): React.ReactElement {
     <div className="app-layout">
       {/* ---- Left: 3D Cesium Globe ---- */}
       <div className="cesium-pane">
+        <button
+          type="button"
+          className="reset-view-btn"
+          onClick={handleResetPoleView}
+          title="Reset Camera to Top-Down South Pole View"
+        >
+          RESET POLE VIEW
+        </button>
+
         <div className="cesium-container" ref={cesiumContainerRef} />
+
+        {/* Vector & Map Legend */}
+        <div className="map-vector-legend" aria-label="Map Vector Legend">
+          <div className="legend-title">MAP VECTOR LEGEND</div>
+          <div className="legend-item">
+            <span className="legend-swatch line-yellow" />
+            <span className="legend-label">#FFFF00: Solar Illumination Ray (Truncated if Shadowed)</span>
+          </div>
+          <div className="legend-item">
+            <span className="legend-swatch line-green" />
+            <span className="legend-label">#00CC00: Direct-to-Earth (DTE) Clear Link</span>
+          </div>
+          <div className="legend-item">
+            <span className="legend-swatch line-amber" />
+            <span className="legend-label">#FFAA00: LunaNet Orbital Relay Link (2-Hop)</span>
+          </div>
+          <div className="legend-item">
+            <span className="legend-swatch line-red" />
+            <span className="legend-label">#FF3333: Terrain-Blocked Line of Sight</span>
+          </div>
+          <div className="legend-item">
+            <span className="legend-swatch target-crosshair">⌖</span>
+            <span className="legend-label">#FFFFFF: Selected Landing Site</span>
+          </div>
+          <div className="legend-item">
+            <span className="legend-swatch ring-gray">○</span>
+            <span className="legend-label">#888888: Major South Pole Crater Rims &amp; Lat Grid</span>
+          </div>
+        </div>
       </div>
 
       {/* ---- Right: Control & Telemetry Panel ---- */}
@@ -495,6 +628,7 @@ export default function App(): React.ReactElement {
           <div className="preset-grid">
             {PRESETS.map((p, i) => (
               <button
+                type="button"
                 key={p.name}
                 className={`preset-btn${activePreset === i ? ' active' : ''}`}
                 onClick={() => handlePreset(i)}
@@ -512,6 +646,7 @@ export default function App(): React.ReactElement {
           <div className="band-row">
             {BANDS.map((b) => (
               <button
+                type="button"
                 key={b.key}
                 className={`band-btn${band === b.key ? ' active' : ''}`}
                 onClick={() => handleBand(b.key)}
@@ -522,7 +657,7 @@ export default function App(): React.ReactElement {
           </div>
         </div>
 
-        {/* Time Scrubber */}
+        {/* Time Scrubber & Precision Step Controls */}
         <div className="panel-section">
           <div className="section-label">30-Day Libration Time Scrubber</div>
           <div className="time-utc">{utcTime.replace('T', ' ').replace('Z', ' UTC')}</div>
@@ -535,20 +670,87 @@ export default function App(): React.ReactElement {
             value={timeHours}
             onChange={handleTimeSlider}
           />
-          <button
-            className={`play-btn${playing ? ' playing' : ''}`}
-            onClick={togglePlay}
-          >
-            {playing ? '▐▐  PAUSE' : '▶  PLAY'}
-          </button>
+          <div className="time-controls-row">
+            <button
+              type="button"
+              className="time-step-btn"
+              onClick={() => handleStepTime(-24)}
+              title="Step backward 24 hours"
+            >
+              -24H
+            </button>
+            <button
+              type="button"
+              className="time-step-btn"
+              onClick={() => handleStepTime(-1)}
+              title="Step backward 1 hour"
+            >
+              -1H
+            </button>
+            <button
+              type="button"
+              className={`play-btn${playing ? ' playing' : ''}`}
+              onClick={togglePlay}
+            >
+              {playing ? '▐▐  PAUSE' : '▶  PLAY'}
+            </button>
+            <button
+              type="button"
+              className="time-step-btn"
+              onClick={() => handleStepTime(1)}
+              title="Step forward 1 hour"
+            >
+              +1H
+            </button>
+            <button
+              type="button"
+              className="time-step-btn"
+              onClick={() => handleStepTime(24)}
+              title="Step forward 24 hours"
+            >
+              +24H
+            </button>
+          </div>
         </div>
 
         {/* ---- Telemetry ---- */}
 
-        {/* 1. Site Coordinates */}
+        {/* 1. Site Coordinates & Direct Input */}
         <div className="panel-section">
           <div className="section-label">Site Coordinates</div>
-          <table className="telem-table">
+          <form className="coord-form" onSubmit={handleApplyCoords}>
+            <div className="coord-inputs">
+              <div className="coord-field">
+                <label className="coord-label" htmlFor="lat-input">LAT (°)</label>
+                <input
+                  id="lat-input"
+                  type="number"
+                  step="any"
+                  className="coord-input"
+                  value={inputLat}
+                  onChange={(e) => setInputLat(e.target.value)}
+                  placeholder="-89.9000"
+                />
+              </div>
+              <div className="coord-field">
+                <label className="coord-label" htmlFor="lon-input">LON (°)</label>
+                <input
+                  id="lon-input"
+                  type="number"
+                  step="any"
+                  className="coord-input"
+                  value={inputLon}
+                  onChange={(e) => setInputLon(e.target.value)}
+                  placeholder="0.0000"
+                />
+              </div>
+              <button type="submit" className="coord-apply-btn">
+                APPLY
+              </button>
+            </div>
+          </form>
+
+          <table className="telem-table" style={{ marginTop: '8px' }}>
             <tbody>
               <tr>
                 <td>Latitude</td>
