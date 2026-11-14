@@ -1,16 +1,12 @@
 # Antigravity Agent Guidelines: Lunar Landing Site Navigator
 
 ## Workspace Boundaries
-- **Backend Scope (`backend/`):** All C++17 source files, headers, `CMakeLists.txt`, and backend `Dockerfile` live inside `backend/`.
-- **Frontend Scope (`frontend/`):** React + Vite + TypeScript + TailwindCSS + CesiumJS web application lives inside `frontend/`.
-- Never mix backend and frontend edits inside the same agent task unless explicitly instructed.
+- **Backend Scope (`backend/`):** C++17 source files, headers, `CMakeLists.txt`, and `Dockerfile`.
+- **Frontend Scope (`frontend/`):** React 18 + Vite + TypeScript + CesiumJS + plain CSS web application.
+- Never modify files outside `frontend/` during frontend tasks.
 
-## Backend Rules (`backend/`)
-- Language: C++17 | Build: CMake (`backend/CMakeLists.txt`)
-- REST API: Crow (`crow_all.h`) listening on port `9091` with CORS headers (`Access-Control-Allow-Origin: *`).
-- Geospatial: GDAL (`libgdal-dev`) preserving lunar sphere radius ($R_{\text{Moon}} = 1737400.0\text{ m}$).
-
-## Frontend Rules (`frontend/`)
-- Framework: React 18 + Vite + TypeScript + TailwindCSS.
-- 3D Engine: CesiumJS configured with `Cesium.Ellipsoid.MOON`.
-- Live API Endpoint: `https://lunar-api.andreos.org/api/v1/analyze` (with automatic offline fallback presets if the network request fails).
+## Frontend Design & Engineering Rules (`frontend/`)
+- **Aesthetic:** Pure utilitarian NASA technical instrumentation style. Pure `#000000` black background, `#FFFFFF` / `#CCCCCC` text, sharp `0px` corners, `1px solid #555555` borders, and `Georgia, "Times New Roman", Times, serif` typography.
+- **Strict Visual Prohibitions:** NO TailwindCSS, NO CSS gradients, NO box-shadows, NO glassmorphism, NO rounded pill badges, NO CSS animations or transitions. Use pure solid colors only (`#000000`, `#FFFFFF`, `#00CC00`, `#FFAA00`, `#FF3333`, `#FFFF00`).
+- **3D Engine:** CesiumJS configured with `Cesium.Ellipsoid.MOON`.
+- **Live API Endpoint:** `https://lunar-api.andreos.org/api/v1/analyze` with deterministic offline TypeScript fallback.
