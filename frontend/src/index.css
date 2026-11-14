@@ -1,0 +1,297 @@
+/* ============================================================
+   LUNAR NAVIGATOR — NASA Utilitarian Instrumentation Style
+   Pure black, Georgia serif, 1px solid borders, 0px corners
+   NO gradients, NO shadows, NO animations, NO rounded corners
+   ============================================================ */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  background: #000000;
+  color: #FFFFFF;
+  font-family: Georgia, "Times New Roman", Times, serif;
+  font-size: 13px;
+  overflow: hidden;
+}
+
+/* ---- Layout ---- */
+.app-layout {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  grid-template-rows: 100%;
+  width: 100%;
+  height: 100%;
+}
+
+.cesium-pane {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #000000;
+  border-right: 1px solid #555555;
+}
+
+.cesium-container {
+  width: 100%;
+  height: 100%;
+}
+
+/* ---- Right Panel ---- */
+.control-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #000000;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* ---- Panel Header ---- */
+.panel-header {
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid #555555;
+  flex-shrink: 0;
+}
+
+.panel-title {
+  font-size: 13px;
+  font-weight: bold;
+  letter-spacing: 0.08em;
+  color: #FFFFFF;
+  text-transform: uppercase;
+}
+
+.panel-subtitle {
+  font-size: 10px;
+  color: #B5B5B5;
+  letter-spacing: 0.06em;
+  margin-top: 2px;
+}
+
+.source-indicator {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: bold;
+  letter-spacing: 0.08em;
+  margin-top: 4px;
+  padding: 2px 4px;
+  border: 1px solid currentColor;
+}
+
+.source-live   { color: #00CC00; }
+.source-offline { color: #FFAA00; }
+
+/* ---- Section ---- */
+.panel-section {
+  border-bottom: 1px solid #555555;
+  padding: 8px 12px;
+  flex-shrink: 0;
+}
+
+.section-label {
+  font-size: 10px;
+  font-weight: bold;
+  letter-spacing: 0.1em;
+  color: #B5B5B5;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+/* ---- Preset Buttons ---- */
+.preset-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.preset-btn {
+  background: #000000;
+  color: #FFFFFF;
+  border: 1px solid #555555;
+  padding: 5px 6px;
+  font-family: Georgia, "Times New Roman", Times, serif;
+  font-size: 10px;
+  cursor: pointer;
+  text-align: left;
+  line-height: 1.4;
+}
+
+.preset-btn:hover {
+  background: #111111;
+  border-color: #FFFFFF;
+}
+
+.preset-btn.active {
+  border-color: #00CC00;
+  color: #00CC00;
+}
+
+.preset-btn .preset-name {
+  display: block;
+  font-weight: bold;
+  font-size: 10px;
+}
+
+.preset-btn .preset-coords {
+  display: block;
+  color: #B5B5B5;
+  font-size: 9px;
+}
+
+/* ---- Frequency Band ---- */
+.band-row {
+  display: flex;
+  gap: 4px;
+}
+
+.band-btn {
+  flex: 1;
+  background: #000000;
+  color: #FFFFFF;
+  border: 1px solid #555555;
+  padding: 4px 4px;
+  font-family: Georgia, "Times New Roman", Times, serif;
+  font-size: 9px;
+  font-weight: bold;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+}
+
+.band-btn:hover {
+  border-color: #FFFFFF;
+}
+
+.band-btn.active {
+  border-color: #FFAA00;
+  color: #FFAA00;
+}
+
+/* ---- Time Scrubber ---- */
+.time-utc {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: #FFFFFF;
+  margin-bottom: 6px;
+  letter-spacing: 0.04em;
+}
+
+.time-scrubber {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  background: #333333;
+  border: 1px solid #555555;
+  cursor: pointer;
+  outline: none;
+  margin-bottom: 6px;
+}
+
+.time-scrubber::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  background: #FFFFFF;
+  border: 1px solid #AAAAAA;
+  cursor: pointer;
+}
+
+.time-scrubber::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  background: #FFFFFF;
+  border: 1px solid #AAAAAA;
+  cursor: pointer;
+  border-radius: 0;
+}
+
+.play-btn {
+  background: #000000;
+  color: #FFFFFF;
+  border: 1px solid #555555;
+  padding: 4px 14px;
+  font-family: Georgia, "Times New Roman", Times, serif;
+  font-size: 11px;
+  font-weight: bold;
+  cursor: pointer;
+  letter-spacing: 0.08em;
+}
+
+.play-btn:hover {
+  border-color: #FFFFFF;
+}
+
+.play-btn.playing {
+  color: #FFAA00;
+  border-color: #FFAA00;
+}
+
+/* ---- Telemetry Tables ---- */
+.telem-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.telem-table td {
+  padding: 2px 0;
+  font-size: 11px;
+  vertical-align: top;
+  line-height: 1.5;
+}
+
+.telem-table td:first-child {
+  color: #B5B5B5;
+  width: 55%;
+  padding-right: 8px;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+}
+
+.telem-table td:last-child {
+  color: #FFFFFF;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  font-size: 11px;
+}
+
+.status-clear    { color: #00CC00; font-weight: bold; }
+.status-warn     { color: #FFAA00; font-weight: bold; }
+.status-critical { color: #FF3333; font-weight: bold; }
+.status-solar    { color: #FFFF00; font-weight: bold; }
+
+/* ---- Overall comms banner ---- */
+.comms-banner {
+  font-size: 11px;
+  font-weight: bold;
+  letter-spacing: 0.06em;
+  padding: 4px 0 2px;
+  border-bottom: 1px solid #333333;
+  margin-bottom: 4px;
+}
+
+/* ---- Mobile fallback ---- */
+@media (max-width: 768px) {
+  html, body, #root {
+    overflow: auto;
+  }
+  .app-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: 50vh auto;
+    height: auto;
+  }
+  .cesium-pane {
+    border-right: none;
+    border-bottom: 1px solid #555555;
+  }
+  .control-panel {
+    height: auto;
+    overflow-y: visible;
+  }
+}
