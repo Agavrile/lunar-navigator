@@ -40,14 +40,41 @@ interface CraterFeature {
 }
 
 const IAU_CRATERS: CraterFeature[] = [
-  { name: 'Shackleton', lat: -89.67, lon: 129.78, radiusM: 10460 },
-  { name: 'Haworth',    lat: -87.45, lon: 354.83, radiusM: 25710 },
-  { name: 'Shoemaker',  lat: -88.14, lon:  45.91, radiusM: 25910 },
-  { name: 'Faustini',   lat: -87.18, lon:  84.31, radiusM: 21240 },
-  { name: 'Cabeus',     lat: -85.33, lon: 317.87, radiusM: 50290 },
+  { name: 'Shackleton',  lat: -89.67, lon: 129.78, radiusM: 10460 },
+  { name: 'de Gerlache', lat: -88.48, lon: 271.66, radiusM: 16355 },
+  { name: 'Shoemaker',   lat: -88.14, lon:  45.91, radiusM: 25910 },
+  { name: 'Haworth',     lat: -87.45, lon: 354.83, radiusM: 25710 },
+  { name: 'Faustini',    lat: -87.18, lon:  84.31, radiusM: 21240 },
+  { name: 'Cabeus',      lat: -85.33, lon: 317.87, radiusM: 50290 },
 ];
 
 const MOON_RADIUS = 1_737_400; // metres
+
+/* ============================================================
+   Time helpers
+   ============================================================ */
+
+function formatUtcClock(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const yyyy = d.getUTCFullYear();
+  const mm = pad(d.getUTCMonth() + 1);
+  const dd = pad(d.getUTCDate());
+  const hh = pad(d.getUTCHours());
+  const min = pad(d.getUTCMinutes());
+  const ss = pad(d.getUTCSeconds());
+  return `LIVE UTC: ${yyyy}-${mm}-${dd} ${hh}:${min}:${ss} UTC`;
+}
+
+function toDatetimeLocalString(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const yyyy = d.getUTCFullYear();
+  const mm = pad(d.getUTCMonth() + 1);
+  const dd = pad(d.getUTCDate());
+  const hh = pad(d.getUTCHours());
+  const min = pad(d.getUTCMinutes());
+  const ss = pad(d.getUTCSeconds());
+  return `${yyyy}-${mm}-${dd}T${hh}:${min}:${ss}`;
+}
 
 /* ============================================================
    Colour helpers
@@ -106,22 +133,48 @@ function moonCartesian(lat: number, lon: number, alt = 0): Cesium.Cartesian3 {
   );
 }
 
-function computeCirclePositions(centerLat: number, centerLon: number, radiusM: number, segments = 64): Cesium.Cartesian3[] {
+/**
+ * Builds precise lunar circle polyline coordinates on Cesium.Ellipsoid.MOON.
+ * Avoids entity.ellipse which defaults to Earth WGS84 and shifts polar coordinates.
+ */
+function buildLunarCirclePositions(
+  centerLat: number,
+  centerLon: number,
+  radiusM: number,
+  segments = 64,
+): Cesium.Cartesian3[] {
+  // 1. Converts (centerLon, centerLat, 0) to Cartesian3 on Cesium.Ellipsoid.MOON
+  const center = Cesium.Cartesian3.fromDegrees(centerLon, centerLat, 0, Cesium.Ellipsoid.MOON);
+
+  // 2. Builds the local tangent frame
+  const enu = Cesium.Transforms.eastNorthUpToFixedFrame(center, Cesium.Ellipsoid.MOON);
   const pts: Cesium.Cartesian3[] = [];
-  const lat0 = toRad(centerLat);
-  const lon0 = toRad(centerLon);
-  const d = radiusM / MOON_RADIUS;
 
+  // 3. For i = 0..segments, transforms (radiusM * Math.cos(theta), radiusM * Math.sin(theta), 0)
+  // by enu and projects each point onto Cesium.Ellipsoid.MOON.scaleToGeodeticSurface(pt)
   for (let i = 0; i <= segments; i++) {
-    const bearing = (i * 2 * Math.PI) / segments;
-    const sinLat = Math.sin(lat0) * Math.cos(d) + Math.cos(lat0) * Math.sin(d) * Math.cos(bearing);
-    const lat = Math.asin(Math.max(-1, Math.min(1, sinLat)));
-    const y = Math.sin(bearing) * Math.sin(d) * Math.cos(lat0);
-    const x = Math.cos(d) - Math.sin(lat0) * Math.sin(lat);
-    const lon = lon0 + Math.atan2(y, x);
-
-    pts.push(Cesium.Cartesian3.fromRadians(lon, lat, 200, Cesium.Ellipsoid.MOON));
+    const theta = (i * 2 * Math.PI) / segments;
+    const local = new Cesium.Cartesian3(
+      radiusM * Math.cos(theta),
+      radiusM * Math.sin(theta),
+      0,
+    );
+    const pt = new Cesium.Cartesian3();
+    Cesium.Matrix4.multiplyByPoint(enu, local, pt);
+    const surfacePt = Cesium.Ellipsoid.MOON.scaleToGeodeticSurface(pt);
+    if (surfacePt) {
+      // Slightly lift (40m) above lunar radius so polyline does not z-fight with WAC surface
+      const elevated = Cesium.Cartesian3.multiplyByScalar(
+        surfacePt,
+        (MOON_RADIUS + 40) / MOON_RADIUS,
+        new Cesium.Cartesian3(),
+      );
+      pts.push(elevated);
+    } else {
+      pts.push(pt);
+    }
   }
+
   return pts;
 }
 
@@ -146,6 +199,30 @@ function azElToCartesian(
   const world = new Cesium.Cartesian3();
   Cesium.Matrix4.multiplyByPoint(enu, local, world);
   return world;
+}
+
+function addRayLabel(
+  viewer: Cesium.Viewer,
+  position: Cesium.Cartesian3,
+  text: string,
+  colorCss: string,
+  pixelOffset: Cesium.Cartesian2 = new Cesium.Cartesian2(0, 0),
+): Cesium.Entity {
+  return viewer.entities.add({
+    position,
+    label: {
+      text,
+      font: 'bold 11px Georgia, serif',
+      fillColor: Cesium.Color.fromCssColorString(colorCss),
+      outlineColor: Cesium.Color.BLACK,
+      outlineWidth: 3,
+      style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+      showBackground: true,
+      backgroundColor: Cesium.Color.fromAlpha(Cesium.Color.BLACK, 0.75),
+      pixelOffset,
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    },
+  });
 }
 
 /* ============================================================
@@ -176,10 +253,14 @@ function addGraticule(viewer: Cesium.Viewer): void {
 
     if (lat === -89) {
       labelText = '89°S (30 km)';
+    } else if (lat === -88) {
+      labelText = '88°S';
     } else if (lat === -87) {
       labelText = '87°S (91 km)';
+    } else if (lat === -86) {
+      labelText = '86°S';
     } else if (lat === -85) {
-      labelText = '85°S · 152 km (ARTEMIS SOUTH POLE ZONE)';
+      labelText = '85°S · 152 km ARTEMIS ZONE';
       isArtemisZone = true;
     }
 
@@ -242,15 +323,14 @@ function addGraticule(viewer: Cesium.Viewer): void {
 function addCraters(viewer: Cesium.Viewer): void {
   // 1. IAU Crater Rims and Labels
   for (const c of IAU_CRATERS) {
-    // 1.5px gray circle for IAU crater rim
+    // 1.5px gray circle for IAU crater rim using buildLunarCirclePositions
     viewer.entities.add({
       name: `${c.name} Crater Rim`,
       polyline: {
-        positions: computeCirclePositions(c.lat, c.lon, c.radiusM, 64),
+        positions: buildLunarCirclePositions(c.lat, c.lon, c.radiusM, 64),
         width: 1.5,
-        material: new Cesium.ColorMaterialProperty(
-          Cesium.Color.fromCssColorString('#888888'),
-        ),
+        material: Cesium.Color.fromCssColorString('#999999'),
+        arcType: Cesium.ArcType.NONE,
         clampToGround: false,
       },
     });
@@ -307,9 +387,8 @@ export default function App(): React.ReactElement {
   const viewerRef          = useRef<Cesium.Viewer | null>(null);
 
   /* Entity refs for cleanup */
-  const markerRef      = useRef<Cesium.Entity | null>(null);
-  const sunRayRef      = useRef<Cesium.Entity | null>(null);
-  const commsRayRef    = useRef<Cesium.Entity[]>([]);
+  const markerRef       = useRef<Cesium.Entity | null>(null);
+  const rayEntitiesRef  = useRef<Cesium.Entity[]>([]);
 
   /* State */
   const [lat, setLat]   = useState<number>(-89.9);
@@ -322,10 +401,22 @@ export default function App(): React.ReactElement {
   const [result, setResult]       = useState<AnalyzeResponse | null>(null);
   const [activePreset, setActivePreset] = useState<number>(0);
 
+  /* Live Clock State */
+  const [liveClock, setLiveClock] = useState<string>(() => formatUtcClock(new Date()));
+
+  /* UTC Time State */
+  const [utcTime, setUtcTime] = useState<string>(TIME_START.toISOString());
+  const [customDateInput, setCustomDateInput] = useState<string>(toDatetimeLocalString(TIME_START));
+
   const playIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  /* Derived UTC */
-  const utcTime = new Date(TIME_START.getTime() + timeHours * 3_600_000).toISOString();
+  /* Ticking live UTC clock */
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setLiveClock(formatUtcClock(new Date()));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   /* ---- Reset Camera to Pole View ---- */
   const handleResetPoleView = () => {
@@ -459,9 +550,8 @@ export default function App(): React.ReactElement {
 
     /* Remove old entities */
     if (markerRef.current) viewer.entities.remove(markerRef.current);
-    if (sunRayRef.current) viewer.entities.remove(sunRayRef.current);
-    commsRayRef.current.forEach((e) => viewer.entities.remove(e));
-    commsRayRef.current = [];
+    rayEntitiesRef.current.forEach((e) => viewer.entities.remove(e));
+    rayEntitiesRef.current = [];
 
     /* Landing site marker — white outline + red center target marker */
     const markerPos = moonCartesian(lat, lon, 50);
@@ -478,26 +568,41 @@ export default function App(): React.ReactElement {
 
     const RAY_LENGTH = MOON_RADIUS * 0.04; // ~70 km
 
-    /* Sun ray (#FFFF00) */
+    /* 1. Solar ray (#FFFF00) */
     const isShadow = result.sun.power_status === 'CRITICAL_SHADOW';
-    const sunLen   = isShadow ? RAY_LENGTH * 0.3 : RAY_LENGTH;
+    const sunLen   = isShadow ? RAY_LENGTH * 0.35 : RAY_LENGTH;
     const sunEnd   = azElToCartesian(lat, lon, result.sun.azimuth_deg, result.sun.elevation_deg, sunLen);
-    sunRayRef.current = viewer.entities.add({
-      polyline: {
-        positions: [markerPos, sunEnd],
-        width: isShadow ? 1.5 : 2.5,
-        material: new Cesium.ColorMaterialProperty(
-          Cesium.Color.fromCssColorString('#FFFF00').withAlpha(isShadow ? 0.35 : 1.0),
-        ),
-        clampToGround: false,
-      },
-    });
+    
+    // Ray polyline
+    rayEntitiesRef.current.push(
+      viewer.entities.add({
+        polyline: {
+          positions: [markerPos, sunEnd],
+          width: isShadow ? 1.5 : 2.5,
+          material: new Cesium.ColorMaterialProperty(
+            Cesium.Color.fromCssColorString('#FFFF00').withAlpha(isShadow ? 0.4 : 1.0),
+          ),
+          clampToGround: false,
+        },
+      }),
+    );
 
-    /* Comms rays */
+    // Midpoint label on Solar Ray
+    const sunMid = Cesium.Cartesian3.midpoint(markerPos, sunEnd, new Cesium.Cartesian3());
+    const sunText = isShadow
+      ? 'SOLAR RAY [SHADOWED]'
+      : `SOLAR RAY (${result.sun.elevation_deg.toFixed(1)}°)`;
+    rayEntitiesRef.current.push(
+      addRayLabel(viewer, sunMid, sunText, '#FFFF00', new Cesium.Cartesian2(0, -12)),
+    );
+
+    /* 2. Comms rays */
     const comms = result.overall_comms;
     if (comms === 'DIRECT_DTE') {
       const earthEnd = azElToCartesian(lat, lon, result.earth.azimuth_deg, result.earth.elevation_deg, RAY_LENGTH);
-      commsRayRef.current.push(
+      
+      // Direct DTE polyline
+      rayEntitiesRef.current.push(
         viewer.entities.add({
           polyline: {
             positions: [markerPos, earthEnd],
@@ -507,11 +612,20 @@ export default function App(): React.ReactElement {
           },
         }),
       );
+
+      // Midpoint label on Direct DTE Ray
+      const earthMid = Cesium.Cartesian3.midpoint(markerPos, earthEnd, new Cesium.Cartesian3());
+      const earthText = `DIRECT-TO-EARTH (DTE ${result.earth.elevation_deg.toFixed(1)}°)`;
+      rayEntitiesRef.current.push(
+        addRayLabel(viewer, earthMid, earthText, '#00CC00', new Cesium.Cartesian2(0, 12)),
+      );
     } else if (comms === 'RELAY_AVAILABLE') {
       // Two-segment: site -> relay overhead -> sky
-      const relayMidPt  = azElToCartesian(lat, lon, result.relay.azimuth_deg, result.relay.elevation_deg, RAY_LENGTH * 0.5);
-      const relayEndPt  = azElToCartesian(lat, lon, result.relay.azimuth_deg, result.relay.elevation_deg + 10, RAY_LENGTH);
-      commsRayRef.current.push(
+      const relayMidPt = azElToCartesian(lat, lon, result.relay.azimuth_deg, result.relay.elevation_deg, RAY_LENGTH * 0.5);
+      const relayEndPt = azElToCartesian(lat, lon, result.relay.azimuth_deg, result.relay.elevation_deg + 10, RAY_LENGTH);
+      
+      // 2-segment dashed polyline
+      rayEntitiesRef.current.push(
         viewer.entities.add({
           polyline: {
             positions: [markerPos, relayMidPt, relayEndPt],
@@ -524,10 +638,49 @@ export default function App(): React.ReactElement {
           },
         }),
       );
+
+      // Relay vertex satellite point & label
+      rayEntitiesRef.current.push(
+        viewer.entities.add({
+          position: relayMidPt,
+          point: {
+            pixelSize: 8,
+            color: Cesium.Color.fromCssColorString('#FFAA00'),
+            outlineColor: Cesium.Color.WHITE,
+            outlineWidth: 1.5,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+          label: {
+            text: `🛰 ${result.relay.node_name}`,
+            font: 'bold 11px Georgia, serif',
+            fillColor: Cesium.Color.fromCssColorString('#FFAA00'),
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 3,
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            showBackground: true,
+            backgroundColor: Cesium.Color.fromAlpha(Cesium.Color.BLACK, 0.75),
+            pixelOffset: new Cesium.Cartesian2(0, -14),
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+        }),
+      );
+
+      // Segment 1 midpoint label: UPLINK → node_name
+      const seg1Mid = Cesium.Cartesian3.midpoint(markerPos, relayMidPt, new Cesium.Cartesian3());
+      rayEntitiesRef.current.push(
+        addRayLabel(viewer, seg1Mid, `UPLINK → ${result.relay.node_name}`, '#FFAA00', new Cesium.Cartesian2(0, -10)),
+      );
+
+      // Segment 2 midpoint label: DOWNLINK → EARTH
+      const seg2Mid = Cesium.Cartesian3.midpoint(relayMidPt, relayEndPt, new Cesium.Cartesian3());
+      rayEntitiesRef.current.push(
+        addRayLabel(viewer, seg2Mid, 'DOWNLINK → EARTH', '#FFAA00', new Cesium.Cartesian2(0, 10)),
+      );
     } else {
       // COMPLETE_BLACKOUT — short red blocked line
       const blockedEnd = azElToCartesian(lat, lon, result.earth.azimuth_deg, result.earth.elevation_deg, RAY_LENGTH * 0.25);
-      commsRayRef.current.push(
+      
+      rayEntitiesRef.current.push(
         viewer.entities.add({
           polyline: {
             positions: [markerPos, blockedEnd],
@@ -536,6 +689,12 @@ export default function App(): React.ReactElement {
             clampToGround: false,
           },
         }),
+      );
+
+      // Blocked midpoint label
+      const blockedMid = Cesium.Cartesian3.midpoint(markerPos, blockedEnd, new Cesium.Cartesian3());
+      rayEntitiesRef.current.push(
+        addRayLabel(viewer, blockedMid, 'DTE BLOCKED (TERRAIN)', '#FF3333', new Cesium.Cartesian2(0, 10)),
       );
     }
   }, [result, lat, lon]);
@@ -546,7 +705,14 @@ export default function App(): React.ReactElement {
       playIntervalRef.current = setInterval(() => {
         setTimeHours((h) => {
           const next = h + 1;
-          if (next >= TOTAL_HOURS) { setPlaying(false); return TOTAL_HOURS; }
+          if (next >= TOTAL_HOURS) {
+            setPlaying(false);
+            return TOTAL_HOURS;
+          }
+          const nextDate = new Date(TIME_START.getTime() + next * 3_600_000);
+          const nextIso = nextDate.toISOString();
+          setUtcTime(nextIso);
+          setCustomDateInput(toDatetimeLocalString(nextDate));
           return next;
         });
       }, 100);
@@ -578,11 +744,51 @@ export default function App(): React.ReactElement {
     const h = parseInt(e.target.value, 10);
     setTimeHours(h);
     setPlaying(false);
+    const newDate = new Date(TIME_START.getTime() + h * 3_600_000);
+    const newIso = newDate.toISOString();
+    setUtcTime(newIso);
+    setCustomDateInput(toDatetimeLocalString(newDate));
   };
 
   const handleStepTime = (deltaHours: number) => {
     setPlaying(false);
-    setTimeHours((h) => Math.max(0, Math.min(TOTAL_HOURS, h + deltaHours)));
+    setTimeHours((h) => {
+      const next = Math.max(0, Math.min(TOTAL_HOURS, h + deltaHours));
+      const newDate = new Date(TIME_START.getTime() + next * 3_600_000);
+      const newIso = newDate.toISOString();
+      setUtcTime(newIso);
+      setCustomDateInput(toDatetimeLocalString(newDate));
+      return next;
+    });
+  };
+
+  const handleNowUtc = () => {
+    setPlaying(false);
+    const now = new Date();
+    const nowIso = now.toISOString();
+    setUtcTime(nowIso);
+    setCustomDateInput(toDatetimeLocalString(now));
+    const diffHours = (now.getTime() - TIME_START.getTime()) / 3_600_000;
+    if (diffHours >= 0 && diffHours <= TOTAL_HOURS) {
+      setTimeHours(Math.round(diffHours));
+    }
+    fetchImmediate(lat, lon, band, nowIso);
+  };
+
+  const handleSetCustomUtc = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!customDateInput) return;
+    const parseStr = customDateInput.endsWith('Z') ? customDateInput : customDateInput + 'Z';
+    const parsedDate = new Date(parseStr);
+    if (isNaN(parsedDate.getTime())) return;
+    setPlaying(false);
+    const newIso = parsedDate.toISOString();
+    setUtcTime(newIso);
+    const diffHours = (parsedDate.getTime() - TIME_START.getTime()) / 3_600_000;
+    if (diffHours >= 0 && diffHours <= TOTAL_HOURS) {
+      setTimeHours(Math.round(diffHours));
+    }
+    fetchImmediate(lat, lon, band, newIso);
   };
 
   const togglePlay = () => setPlaying((p) => !p);
@@ -655,11 +861,12 @@ export default function App(): React.ReactElement {
       {/* ---- Right: Control & Telemetry Panel ---- */}
       <div className="control-panel">
 
-        {/* Header with Project/Team Logo */}
+        {/* Header with Live UTC Clock & Mission Logo */}
         <div className="panel-header">
           <div className="panel-header-content">
             <div className="panel-title">Lunar South Pole Navigator</div>
             <div className="panel-subtitle">NASA Space Apps Challenge — Landing Site Analysis</div>
+            <div className="live-clock-badge">{liveClock}</div>
             {result && (
               <span className={`source-indicator ${result.source === 'LIVE' ? 'source-live' : 'source-offline'}`}>
                 SOURCE: {result.source === 'LIVE' ? 'LIVE C++ ENGINE' : 'OFFLINE FALLBACK'}
@@ -711,9 +918,9 @@ export default function App(): React.ReactElement {
           </div>
         </div>
 
-        {/* Time Scrubber & Precision Step Controls */}
+        {/* Time Scrubber, Precision Step Controls, NOW (UTC), & Custom UTC Picker */}
         <div className="panel-section">
-          <div className="section-label">30-Day Libration Time Scrubber</div>
+          <div className="section-label">Libration &amp; Mission Time Control</div>
           <div className="time-utc">{utcTime.replace('T', ' ').replace('Z', ' UTC')}</div>
           <input
             type="range"
@@ -764,7 +971,35 @@ export default function App(): React.ReactElement {
             >
               +24H
             </button>
+            <button
+              type="button"
+              className="time-step-btn now-btn"
+              onClick={handleNowUtc}
+              title="Set analysis to current real-world UTC"
+            >
+              NOW (UTC)
+            </button>
           </div>
+
+          {/* Custom UTC Date/Time Form */}
+          <form className="custom-utc-form" onSubmit={handleSetCustomUtc}>
+            <label className="coord-label" htmlFor="custom-utc-input">
+              CUSTOM UTC DATE &amp; TIME (ANY EPOCH)
+            </label>
+            <div className="custom-utc-row">
+              <input
+                id="custom-utc-input"
+                type="datetime-local"
+                step="1"
+                className="coord-input custom-utc-input"
+                value={customDateInput}
+                onChange={(e) => setCustomDateInput(e.target.value)}
+              />
+              <button type="submit" className="coord-apply-btn">
+                SET UTC
+              </button>
+            </div>
+          </form>
         </div>
 
         {/* ---- Telemetry ---- */}
