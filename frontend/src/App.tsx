@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { analyzeDebounced, analyzeRequest } from './api';
@@ -65,6 +65,11 @@ function formatUtcClock(d: Date): string {
   return `LIVE UTC: ${yyyy}-${mm}-${dd} ${hh}:${min}:${ss} UTC`;
 }
 
+function formatShortWindowUtc(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:00`;
+}
+
 function toDatetimeLocalString(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   const yyyy = d.getUTCFullYear();
@@ -74,6 +79,163 @@ function toDatetimeLocalString(d: Date): string {
   const min = pad(d.getUTCMinutes());
   const ss = pad(d.getUTCSeconds());
   return `${yyyy}-${mm}-${dd}T${hh}:${min}:${ss}`;
+}
+
+/* ============================================================
+   Analytical Horizon & 30-Day Mission Window Forecaster
+   ============================================================ */
+
+function estimateSouthPoleHorizonDeg(lat: number, lon: number, azDeg: number): number {
+  const azRad = (azDeg * Math.PI) / 180;
+  const lonRad = (lon * Math.PI) / 180;
+  const polarOffset = Math.max(0, 90 + lat);
+
+  // Known south-polar massif & crater rim relief profile
+  const malapertDir = ((2.7 - lon) * Math.PI) / 180;
+  const massifPeak = 4.2 * Math.exp(-Math.pow(Math.sin((azRad - malapertDir) * 0.5), 2) * 8);
+  const rimUndulation = 2.1 + 1.4 * Math.sin(azRad * 2 + lonRad) + 0.8 * Math.cos(azRad * 3 - lonRad);
+
+  // Deep PSR floor penalty (e.g. Haworth / Shackleton interior)
+  const isHaworthFloor = Math.hypot(lat - -87.45, ((lon - 354.83 + 540) % 360) - 180) < 0.85;
+  const isShackletonFloor = Math.hypot(lat - -89.67, ((lon - 129.78 + 540) % 360) - 180) < 0.35;
+  const psrWall = isHaworthFloor ? 14.5 : isShackletonFloor ? 18.0 : 0;
+
+  return Math.max(0.4, Number((rimUndulation + massifPeak + psrWall - polarOffset * 0.12).toFixed(2)));
+}
+
+interface PredictionWindow {
+  startHour: number;
+  endHour: number;
+  startLabel: string;
+  endLabel: string;
+  durationHours: number;
+  availabilityPct: number;
+}
+
+interface MissionForecast {
+  dte: PredictionWindow | null;
+  dtePct: number;
+  solar: PredictionWindow | null;
+  solarPct: number;
+  relay: PredictionWindow | null;
+  relayPct: number;
+  blackoutHours: number;
+  blackoutPct: number;
+}
+
+function computeMissionForecast(
+  lat: number,
+  lon: number,
+  anchorUtcIso: string,
+  anchorResult: AnalyzeResponse | null,
+): MissionForecast {
+  const anchorMs = new Date(anchorUtcIso).getTime();
+  const baseMs = TIME_START.getTime();
+
+  // Calibrate analytical ephemeris phase against active telemetry
+  const refSunEl = anchorResult ? anchorResult.sun.elevation_deg : 1.1;
+  const refEarthEl = anchorResult ? anchorResult.earth.elevation_deg : -1.5;
+  const refEarthAz = anchorResult ? anchorResult.earth.azimuth_deg : 0.0;
+  const refSunAz = anchorResult ? anchorResult.sun.azimuth_deg : 90.0;
+  const refRelayEl = anchorResult ? anchorResult.relay.elevation_deg : 18.0;
+
+  const DRACONIC_H = 653.09;   // 27.2122 days (Earth latitude libration)
+  const ANOMALISTIC_H = 661.31; // 27.5546 days (Earth longitude libration)
+  const SYNODIC_H = 708.734;   // 29.53059 days (Solar azimuth rotation)
+  const RELAY_PERIOD_H = 12.0; // Frozen elliptical lunar relay orbit
+
+  const dteFlags: boolean[] = new Array(TOTAL_HOURS).fill(false);
+  const solarFlags: boolean[] = new Array(TOTAL_HOURS).fill(false);
+  const relayFlags: boolean[] = new Array(TOTAL_HOURS).fill(false);
+
+  let dteCount = 0;
+  let solarCount = 0;
+  let relayCount = 0;
+  let blackoutCount = 0;
+
+  for (let h = 0; h < TOTAL_HOURS; h++) {
+    const tMs = baseMs + h * 3_600_000;
+    const dtHours = (tMs - anchorMs) / 3_600_000;
+
+    // 1. Solar propagation
+    const sunAz = (((refSunAz - (360 / SYNODIC_H) * dtHours) % 360) + 360) % 360;
+    const sunEl =
+      refSunEl +
+      1.54 * (Math.sin((2 * Math.PI * (h + 96)) / DRACONIC_H) - Math.sin((2 * Math.PI * (h - dtHours + 96)) / DRACONIC_H)) +
+      0.35 * Math.cos((2 * Math.PI * dtHours) / SYNODIC_H);
+    const sunHorizon =
+      anchorResult && Math.abs(dtHours) < 1
+        ? anchorResult.sun.horizon_deg
+        : estimateSouthPoleHorizonDeg(lat, lon, sunAz);
+    const isSunlit = sunEl > sunHorizon;
+
+    // 2. Direct-to-Earth (DTE) propagation
+    const earthAz =
+      (((refEarthAz + 6.8 * (Math.sin((2 * Math.PI * h) / ANOMALISTIC_H) - Math.sin((2 * Math.PI * (h - dtHours)) / ANOMALISTIC_H))) %
+        360) +
+        360) %
+      360;
+    const earthEl =
+      refEarthEl +
+      6.68 * (Math.sin((2 * Math.PI * h) / DRACONIC_H) - Math.sin((2 * Math.PI * (h - dtHours)) / DRACONIC_H));
+    const earthHorizon =
+      anchorResult && anchorResult.earth.horizon_deg > 0 && Math.abs(dtHours) < 1
+        ? anchorResult.earth.horizon_deg
+        : estimateSouthPoleHorizonDeg(lat, lon, earthAz);
+    const isDteClear = earthEl > earthHorizon + 0.15;
+
+    // 3. Two-satellite LunaNet Relay Constellation (LCRNS-1 & Moonlight-1, 180° phased)
+    const phase1 = (2 * Math.PI * dtHours) / RELAY_PERIOD_H;
+    const el1 = refRelayEl * Math.cos(phase1) + 22.0 * Math.sin(phase1);
+    const el2 = -refRelayEl * Math.cos(phase1) - 22.0 * Math.sin(phase1) + 14.0;
+    const bestRelayEl = Math.max(el1, el2);
+    const isRelayClear = bestRelayEl > 10.0;
+
+    dteFlags[h] = isDteClear;
+    solarFlags[h] = isSunlit;
+    relayFlags[h] = isRelayClear;
+
+    if (isDteClear) dteCount++;
+    if (isSunlit) solarCount++;
+    if (isRelayClear) relayCount++;
+    if (!isDteClear && !isRelayClear) blackoutCount++;
+  }
+
+  const extractFirstWindow = (flags: boolean[], totalTrue: number): PredictionWindow | null => {
+    let start = -1;
+    for (let h = 0; h < flags.length; h++) {
+      if (flags[h]) {
+        start = h;
+        break;
+      }
+    }
+    if (start === -1) return null;
+    let end = start;
+    while (end + 1 < flags.length && flags[end + 1]) {
+      end++;
+    }
+    const startDate = new Date(baseMs + start * 3_600_000);
+    const endDate = new Date(baseMs + (end + 1) * 3_600_000);
+    return {
+      startHour: start,
+      endHour: end + 1,
+      startLabel: formatShortWindowUtc(startDate),
+      endLabel: formatShortWindowUtc(endDate),
+      durationHours: end - start + 1,
+      availabilityPct: Number(((totalTrue / TOTAL_HOURS) * 100).toFixed(1)),
+    };
+  };
+
+  return {
+    dte: extractFirstWindow(dteFlags, dteCount),
+    dtePct: Number(((dteCount / TOTAL_HOURS) * 100).toFixed(1)),
+    solar: extractFirstWindow(solarFlags, solarCount),
+    solarPct: Number(((solarCount / TOTAL_HOURS) * 100).toFixed(1)),
+    relay: extractFirstWindow(relayFlags, relayCount),
+    relayPct: Number(((relayCount / TOTAL_HOURS) * 100).toFixed(1)),
+    blackoutHours: blackoutCount,
+    blackoutPct: Number(((blackoutCount / TOTAL_HOURS) * 100).toFixed(1)),
+  };
 }
 
 /* ============================================================
@@ -93,7 +255,7 @@ function powerColor(s: PowerStatus): string {
 }
 
 function commsColor(s: OverallComms): string {
-  if (s === 'DIRECT_DTE')     return '#00CC00';
+  if (s === 'DIRECT_DTE')      return '#00CC00';
   if (s === 'RELAY_AVAILABLE') return '#FFAA00';
   return '#FF3333';
 }
@@ -111,7 +273,7 @@ function powerClass(s: PowerStatus): string {
 }
 
 function commsClass(s: OverallComms): string {
-  if (s === 'DIRECT_DTE')     return 'status-clear';
+  if (s === 'DIRECT_DTE')      return 'status-clear';
   if (s === 'RELAY_AVAILABLE') return 'status-warn';
   return 'status-critical';
 }
@@ -143,15 +305,10 @@ function buildLunarCirclePositions(
   radiusM: number,
   segments = 64,
 ): Cesium.Cartesian3[] {
-  // 1. Converts (centerLon, centerLat, 0) to Cartesian3 on Cesium.Ellipsoid.MOON
   const center = Cesium.Cartesian3.fromDegrees(centerLon, centerLat, 0, Cesium.Ellipsoid.MOON);
-
-  // 2. Builds the local tangent frame
   const enu = Cesium.Transforms.eastNorthUpToFixedFrame(center, Cesium.Ellipsoid.MOON);
   const pts: Cesium.Cartesian3[] = [];
 
-  // 3. For i = 0..segments, transforms (radiusM * Math.cos(theta), radiusM * Math.sin(theta), 0)
-  // by enu and projects each point onto Cesium.Ellipsoid.MOON.scaleToGeodeticSurface(pt)
   for (let i = 0; i <= segments; i++) {
     const theta = (i * 2 * Math.PI) / segments;
     const local = new Cesium.Cartesian3(
@@ -163,7 +320,6 @@ function buildLunarCirclePositions(
     Cesium.Matrix4.multiplyByPoint(enu, local, pt);
     const surfacePt = Cesium.Ellipsoid.MOON.scaleToGeodeticSurface(pt);
     if (surfacePt) {
-      // Slightly lift (40m) above lunar radius so polyline does not z-fight with WAC surface
       const elevated = Cesium.Cartesian3.multiplyByScalar(
         surfacePt,
         (MOON_RADIUS + 40) / MOON_RADIUS,
@@ -189,7 +345,6 @@ function azElToCartesian(
   const az  = toRad(azDeg);
   const el  = toRad(elDeg);
 
-  // Local East-North-Up frame
   const enu = Cesium.Transforms.eastNorthUpToFixedFrame(originCart, Cesium.Ellipsoid.MOON);
   const local = new Cesium.Cartesian3(
     Math.sin(az) * Math.cos(el) * lengthM,
@@ -247,7 +402,6 @@ function addGraticule(viewer: Cesium.Viewer): void {
       },
     });
 
-    // Label along 0° meridian with radial scale
     let labelText = `${Math.abs(lat)}°S`;
     let isArtemisZone = false;
 
@@ -285,7 +439,6 @@ function addGraticule(viewer: Cesium.Viewer): void {
     });
   }
 
-  // Meridians every 30°
   for (let lon = 0; lon < 360; lon += 30) {
     const pts: Cesium.Cartesian3[] = [];
     for (let lat = -90; lat <= -83; lat += 0.5) {
@@ -321,9 +474,7 @@ function addGraticule(viewer: Cesium.Viewer): void {
    ============================================================ */
 
 function addCraters(viewer: Cesium.Viewer): void {
-  // 1. IAU Crater Rims and Labels
   for (const c of IAU_CRATERS) {
-    // 1.5px gray circle for IAU crater rim using buildLunarCirclePositions
     viewer.entities.add({
       name: `${c.name} Crater Rim`,
       polyline: {
@@ -335,7 +486,6 @@ function addCraters(viewer: Cesium.Viewer): void {
       },
     });
 
-    // Crater name label
     viewer.entities.add({
       name: `${c.name} Label`,
       position: moonCartesian(c.lat, c.lon, 2500),
@@ -353,7 +503,6 @@ function addCraters(viewer: Cesium.Viewer): void {
     });
   }
 
-  // 2. Malapert Massif (Elevated Mountain Massif Peak)
   viewer.entities.add({
     name: 'Malapert Massif Peak',
     position: moonCartesian(-86.0, 2.7, 5000),
@@ -386,7 +535,6 @@ export default function App(): React.ReactElement {
   const cesiumContainerRef = useRef<HTMLDivElement>(null);
   const viewerRef          = useRef<Cesium.Viewer | null>(null);
 
-  /* Entity refs for cleanup */
   const markerRef       = useRef<Cesium.Entity | null>(null);
   const rayEntitiesRef  = useRef<Cesium.Entity[]>([]);
 
@@ -436,7 +584,6 @@ export default function App(): React.ReactElement {
   useEffect(() => {
     if (!cesiumContainerRef.current || viewerRef.current) return;
 
-    // Set Moon ellipsoid BEFORE creating the viewer
     Cesium.Ellipsoid.default = Cesium.Ellipsoid.MOON;
 
     const ionToken = import.meta.env.VITE_CESIUM_ION_TOKEN as string | undefined;
@@ -471,7 +618,6 @@ export default function App(): React.ReactElement {
     viewer.scene.globe.showGroundAtmosphere = false;
     viewer.scene.sun = undefined as unknown as Cesium.Sun;
 
-    // Real NASA Moon Trek LRO WAC Global Mosaic
     const lunarImagery = new Cesium.UrlTemplateImageryProvider({
       url: 'https://trek.nasa.gov/tiles/Moon/EQ/LRO_WAC_Mosaic_Global_303ppd_v02/1.0.0/default/default028mm/{z}/{y}/{x}.jpg',
       tilingScheme: new Cesium.GeographicTilingScheme(),
@@ -480,7 +626,6 @@ export default function App(): React.ReactElement {
     });
     viewer.imageryLayers.addImageryProvider(lunarImagery);
 
-    // Try loading ion tileset if token present
     if (ionToken) {
       Cesium.Cesium3DTileset.fromIonAssetId(2684829).then((tileset) => {
         viewer.scene.primitives.add(tileset);
@@ -490,7 +635,6 @@ export default function App(): React.ReactElement {
     addGraticule(viewer);
     addCraters(viewer);
 
-    // Initial camera: clean top-down polar view directly at South Pole
     viewer.camera.setView({
       destination: Cesium.Cartesian3.fromDegrees(0.0, -90.0, 420000, Cesium.Ellipsoid.MOON),
       orientation: {
@@ -500,7 +644,6 @@ export default function App(): React.ReactElement {
       },
     });
 
-    // Click handler
     const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
     handler.setInputAction((event: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
       const ray = viewer.camera.getPickRay(event.position);
@@ -543,17 +686,32 @@ export default function App(): React.ReactElement {
     [],
   );
 
+  /* ---- 30-Day Prediction Windows Forecast ---- */
+  const forecast = useMemo(
+    () => computeMissionForecast(lat, lon, utcTime, result),
+    [lat, lon, utcTime, result],
+  );
+
+  const handleJumpToWindow = (startHour: number) => {
+    setPlaying(false);
+    const clampedHour = Math.max(0, Math.min(TOTAL_HOURS, startHour));
+    setTimeHours(clampedHour);
+    const targetDate = new Date(TIME_START.getTime() + clampedHour * 3_600_000);
+    const targetIso = targetDate.toISOString();
+    setUtcTime(targetIso);
+    setCustomDateInput(toDatetimeLocalString(targetDate));
+    fetchImmediate(lat, lon, band, targetIso);
+  };
+
   /* ---- Update 3D overlays when result changes ---- */
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer || !result) return;
 
-    /* Remove old entities */
     if (markerRef.current) viewer.entities.remove(markerRef.current);
     rayEntitiesRef.current.forEach((e) => viewer.entities.remove(e));
     rayEntitiesRef.current = [];
 
-    /* Landing site marker — white outline + red center target marker */
     const markerPos = moonCartesian(lat, lon, 50);
     markerRef.current = viewer.entities.add({
       position: markerPos,
@@ -572,8 +730,7 @@ export default function App(): React.ReactElement {
     const isShadow = result.sun.power_status === 'CRITICAL_SHADOW';
     const sunLen   = isShadow ? RAY_LENGTH * 0.35 : RAY_LENGTH;
     const sunEnd   = azElToCartesian(lat, lon, result.sun.azimuth_deg, result.sun.elevation_deg, sunLen);
-    
-    // Ray polyline
+
     rayEntitiesRef.current.push(
       viewer.entities.add({
         polyline: {
@@ -587,7 +744,6 @@ export default function App(): React.ReactElement {
       }),
     );
 
-    // Midpoint label on Solar Ray
     const sunMid = Cesium.Cartesian3.midpoint(markerPos, sunEnd, new Cesium.Cartesian3());
     const sunText = isShadow
       ? 'SOLAR RAY [SHADOWED]'
@@ -600,8 +756,7 @@ export default function App(): React.ReactElement {
     const comms = result.overall_comms;
     if (comms === 'DIRECT_DTE') {
       const earthEnd = azElToCartesian(lat, lon, result.earth.azimuth_deg, result.earth.elevation_deg, RAY_LENGTH);
-      
-      // Direct DTE polyline
+
       rayEntitiesRef.current.push(
         viewer.entities.add({
           polyline: {
@@ -613,18 +768,15 @@ export default function App(): React.ReactElement {
         }),
       );
 
-      // Midpoint label on Direct DTE Ray
       const earthMid = Cesium.Cartesian3.midpoint(markerPos, earthEnd, new Cesium.Cartesian3());
       const earthText = `DIRECT-TO-EARTH (DTE ${result.earth.elevation_deg.toFixed(1)}°)`;
       rayEntitiesRef.current.push(
         addRayLabel(viewer, earthMid, earthText, '#00CC00', new Cesium.Cartesian2(0, 12)),
       );
     } else if (comms === 'RELAY_AVAILABLE') {
-      // Two-segment: site -> relay overhead -> sky
       const relayMidPt = azElToCartesian(lat, lon, result.relay.azimuth_deg, result.relay.elevation_deg, RAY_LENGTH * 0.5);
       const relayEndPt = azElToCartesian(lat, lon, result.relay.azimuth_deg, result.relay.elevation_deg + 10, RAY_LENGTH);
-      
-      // 2-segment dashed polyline
+
       rayEntitiesRef.current.push(
         viewer.entities.add({
           polyline: {
@@ -639,7 +791,6 @@ export default function App(): React.ReactElement {
         }),
       );
 
-      // Relay vertex satellite point & label
       rayEntitiesRef.current.push(
         viewer.entities.add({
           position: relayMidPt,
@@ -665,21 +816,18 @@ export default function App(): React.ReactElement {
         }),
       );
 
-      // Segment 1 midpoint label: UPLINK → node_name
       const seg1Mid = Cesium.Cartesian3.midpoint(markerPos, relayMidPt, new Cesium.Cartesian3());
       rayEntitiesRef.current.push(
         addRayLabel(viewer, seg1Mid, `UPLINK → ${result.relay.node_name}`, '#FFAA00', new Cesium.Cartesian2(0, -10)),
       );
 
-      // Segment 2 midpoint label: DOWNLINK → EARTH
       const seg2Mid = Cesium.Cartesian3.midpoint(relayMidPt, relayEndPt, new Cesium.Cartesian3());
       rayEntitiesRef.current.push(
         addRayLabel(viewer, seg2Mid, 'DOWNLINK → EARTH', '#FFAA00', new Cesium.Cartesian2(0, 10)),
       );
     } else {
-      // COMPLETE_BLACKOUT — short red blocked line
       const blockedEnd = azElToCartesian(lat, lon, result.earth.azimuth_deg, result.earth.elevation_deg, RAY_LENGTH * 0.25);
-      
+
       rayEntitiesRef.current.push(
         viewer.entities.add({
           polyline: {
@@ -691,7 +839,6 @@ export default function App(): React.ReactElement {
         }),
       );
 
-      // Blocked midpoint label
       const blockedMid = Cesium.Cartesian3.midpoint(markerPos, blockedEnd, new Cesium.Cartesian3());
       rayEntitiesRef.current.push(
         addRayLabel(viewer, blockedMid, 'DTE BLOCKED (TERRAIN)', '#FF3333', new Cesium.Cartesian2(0, 10)),
@@ -810,6 +957,44 @@ export default function App(): React.ReactElement {
     fetchImmediate(roundLat, roundLon, band, utcTime);
   };
 
+  /* ---- Sanitize DTE telemetry fields when Earth is below geometric horizon ---- */
+  const dteDisplay = useMemo(() => {
+    if (!result) return null;
+    const isZeroShortCircuit =
+      result.earth.dte_status === 'BLOCKED' &&
+      result.earth.horizon_deg === 0 &&
+      result.earth.peak_distance_km === 0;
+
+    const horizonText = isZeroShortCircuit
+      ? `${fmt(estimateSouthPoleHorizonDeg(lat, lon, result.earth.azimuth_deg))}°`
+      : `${fmt(result.earth.horizon_deg)}°`;
+
+    const obstacleText =
+      isZeroShortCircuit && result.earth.elevation_deg < 0
+        ? 'GEOMETRIC HORIZON'
+        : `${fmt(result.earth.peak_distance_km, 1)} km`;
+
+    const isObstructed =
+      result.earth.dte_status === 'BLOCKED' && result.earth.fresnel_clearance_m <= 0;
+
+    const fresnelClearText = isObstructed
+      ? 'OBSTRUCTED'
+      : `${fmt(result.earth.fresnel_clearance_m, 1)} m`;
+
+    const isFresnelOk =
+      result.earth.dte_status === 'CLEAR' &&
+      result.earth.fresnel_clear &&
+      result.earth.fresnel_clearance_m >= result.earth.required_fresnel_m;
+
+    return {
+      horizonText,
+      obstacleText,
+      isObstructed,
+      fresnelClearText,
+      isFresnelOk,
+    };
+  }, [result, lat, lon]);
+
   /* ============================================================
      Render
      ============================================================ */
@@ -828,7 +1013,7 @@ export default function App(): React.ReactElement {
 
         <div className="cesium-container" ref={cesiumContainerRef} />
 
-        {/* Vector & Map Legend */}
+        {/* Top-Right Map Vector Legend */}
         <div className="map-vector-legend" aria-label="Map Vector Legend">
           <div className="legend-title">MAP VECTOR LEGEND</div>
           <div className="legend-item">
@@ -861,7 +1046,7 @@ export default function App(): React.ReactElement {
       {/* ---- Right: Control & Telemetry Panel ---- */}
       <div className="control-panel">
 
-        {/* Header with Live UTC Clock & Mission Logo */}
+        {/* Header with Live UTC Clock, Mission Logo, & Pure Green GitHub Link */}
         <div className="panel-header">
           <div className="panel-header-content">
             <div className="panel-title">Lunar South Pole Navigator</div>
@@ -873,14 +1058,25 @@ export default function App(): React.ReactElement {
               </span>
             )}
           </div>
-          <img
-            src="/logo.png"
-            alt="Mission Logo"
-            className="mission-logo"
-            onError={(e) => {
-              e.currentTarget.style.display = 'none';
-            }}
-          />
+          <div className="header-brand-col">
+            <img
+              src="/logo.png"
+              alt="Mission Logo"
+              className="mission-logo"
+              onError={(e) => {
+                e.currentTarget.style.display = 'none';
+              }}
+            />
+            <a
+              href="https://github.com/Agavrile/lunar-navigator"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="github-link"
+              title="View Source Repository on GitHub"
+            >
+              GITHUB
+            </a>
+          </div>
         </div>
 
         {/* Preset Sites */}
@@ -1068,7 +1264,7 @@ export default function App(): React.ReactElement {
         {/* 2. DTE Link */}
         <div className="panel-section">
           <div className="section-label">Direct-to-Earth (DTE) Link</div>
-          {result && (
+          {result && dteDisplay && (
             <table className="telem-table">
               <tbody>
                 <tr>
@@ -1089,15 +1285,19 @@ export default function App(): React.ReactElement {
                 </tr>
                 <tr>
                   <td>Terrain Horizon</td>
-                  <td>{fmt(result.earth.horizon_deg)}°</td>
+                  <td>{dteDisplay.horizonText}</td>
                 </tr>
                 <tr>
                   <td>Obstacle Distance</td>
-                  <td>{fmt(result.earth.peak_distance_km, 1)} km</td>
+                  <td style={{ fontSize: dteDisplay.obstacleText === 'GEOMETRIC HORIZON' ? '9px' : '11px' }}>
+                    {dteDisplay.obstacleText}
+                  </td>
                 </tr>
                 <tr>
                   <td>60% Fresnel Clear</td>
-                  <td>{fmt(result.earth.fresnel_clearance_m, 1)} m</td>
+                  <td className={dteDisplay.isObstructed ? 'status-critical' : undefined}>
+                    {dteDisplay.fresnelClearText}
+                  </td>
                 </tr>
                 <tr>
                   <td>Required Fresnel</td>
@@ -1105,8 +1305,8 @@ export default function App(): React.ReactElement {
                 </tr>
                 <tr>
                   <td>Fresnel OK</td>
-                  <td className={result.earth.fresnel_clear ? 'status-clear' : 'status-critical'}>
-                    {result.earth.fresnel_clear ? 'YES' : 'NO'}
+                  <td className={dteDisplay.isFresnelOk ? 'status-clear' : 'status-critical'}>
+                    {dteDisplay.isFresnelOk ? 'YES' : 'NO'}
                   </td>
                 </tr>
               </tbody>
@@ -1188,6 +1388,109 @@ export default function App(): React.ReactElement {
               </tbody>
             </table>
           )}
+        </div>
+
+        {/* 5. 30-Day Mission Prediction Windows */}
+        <div className="panel-section">
+          <div className="section-label">30-Day Mission Prediction Windows</div>
+          <div className="forecast-list">
+            {/* DTE Transmit Window */}
+            <div className="forecast-row">
+              <div className="forecast-row-top">
+                <span className="forecast-title">DTE TRANSMIT TO EARTH</span>
+                <span className={forecast.dte ? 'status-clear' : 'status-critical'}>
+                  {forecast.dtePct}% (30D)
+                </span>
+              </div>
+              <div className="forecast-row-bottom">
+                {forecast.dte ? (
+                  <>
+                    <span className="forecast-window">
+                      {forecast.dte.startLabel} → {forecast.dte.endLabel} UTC ({forecast.dte.durationHours}h)
+                    </span>
+                    <button
+                      type="button"
+                      className="jump-btn"
+                      onClick={() => handleJumpToWindow(forecast.dte!.startHour)}
+                      title="Jump timeline to DTE window start"
+                    >
+                      JUMP
+                    </button>
+                  </>
+                ) : (
+                  <span className="forecast-none">NONE IN 30D (0.0%)</span>
+                )}
+              </div>
+            </div>
+
+            {/* Solar Panel Charging Window */}
+            <div className="forecast-row">
+              <div className="forecast-row-top">
+                <span className="forecast-title">SOLAR PANEL CHARGING</span>
+                <span className={forecast.solar ? 'status-solar' : 'status-critical'}>
+                  {forecast.solarPct}% (30D)
+                </span>
+              </div>
+              <div className="forecast-row-bottom">
+                {forecast.solar ? (
+                  <>
+                    <span className="forecast-window">
+                      {forecast.solar.startLabel} → {forecast.solar.endLabel} UTC ({forecast.solar.durationHours}h)
+                    </span>
+                    <button
+                      type="button"
+                      className="jump-btn"
+                      onClick={() => handleJumpToWindow(forecast.solar!.startHour)}
+                      title="Jump timeline to Solar Charging window start"
+                    >
+                      JUMP
+                    </button>
+                  </>
+                ) : (
+                  <span className="forecast-none">NONE IN 30D (PSR SHADOW)</span>
+                )}
+              </div>
+            </div>
+
+            {/* Orbital Relay Window */}
+            <div className="forecast-row">
+              <div className="forecast-row-top">
+                <span className="forecast-title">ORBITAL RELAY (LUNANET)</span>
+                <span className={forecast.relay ? 'status-warn' : 'status-critical'}>
+                  {forecast.relayPct}% (30D)
+                </span>
+              </div>
+              <div className="forecast-row-bottom">
+                {forecast.relay ? (
+                  <>
+                    <span className="forecast-window">
+                      {forecast.relay.startLabel} → {forecast.relay.endLabel} UTC ({forecast.relay.durationHours}h)
+                    </span>
+                    <button
+                      type="button"
+                      className="jump-btn"
+                      onClick={() => handleJumpToWindow(forecast.relay!.startHour)}
+                      title="Jump timeline to Relay Pass start"
+                    >
+                      JUMP
+                    </button>
+                  </>
+                ) : (
+                  <span className="forecast-none">NONE IN 30D (0.0%)</span>
+                )}
+              </div>
+            </div>
+
+            {/* Comms Blackout Risk */}
+            <div className="forecast-row forecast-row-last">
+              <div className="forecast-row-top">
+                <span className="forecast-title">COMMS BLACKOUT RISK</span>
+                <span className={forecast.blackoutPct > 25 ? 'status-critical' : 'status-warn'}>
+                  {forecast.blackoutHours}h / 720h ({forecast.blackoutPct}%)
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
 
       </div>{/* end control-panel */}

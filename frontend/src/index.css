@@ -66,17 +66,19 @@ html, body, #root {
   border-color: #FFFFFF;
 }
 
-/* ---- Bottom-Left Map Vector Legend ---- */
+/* ---- Top-Right Map Vector Legend ---- */
 .map-vector-legend {
   position: absolute;
-  bottom: 12px;
-  left: 12px;
+  top: 12px;
+  right: 12px;
+  bottom: auto;
+  left: auto;
   z-index: 10;
   background: #000000;
   border: 1px solid #555555;
   padding: 10px 12px;
   font-family: Georgia, "Times New Roman", Times, serif;
-  max-width: 460px;
+  max-width: 440px;
   pointer-events: none;
   border-radius: 0;
 }
@@ -215,6 +217,14 @@ html, body, #root {
 .source-live    { color: #00CC00; }
 .source-offline { color: #FFAA00; }
 
+.header-brand-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 .mission-logo {
   height: 42px;
   width: auto;
@@ -224,6 +234,27 @@ html, body, #root {
   background: #000000;
   padding: 2px;
   flex-shrink: 0;
+}
+
+.github-link {
+  display: block;
+  width: 100%;
+  color: #00FF00;
+  border: 1px solid #00FF00;
+  background: #000000;
+  font-family: Georgia, "Times New Roman", Times, serif;
+  font-size: 9px;
+  font-weight: bold;
+  letter-spacing: 0.1em;
+  padding: 2px 6px;
+  text-decoration: none;
+  text-align: center;
+  border-radius: 0;
+}
+
+.github-link:hover {
+  background: #00FF00;
+  color: #000000;
 }
 
 /* ---- Section ---- */
@@ -544,6 +575,75 @@ html, body, #root {
   margin-bottom: 4px;
 }
 
+/* ---- 30-Day Prediction Windows ---- */
+.forecast-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.forecast-row {
+  border-bottom: 1px solid #222222;
+  padding-bottom: 5px;
+}
+
+.forecast-row-last {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.forecast-row-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  margin-bottom: 3px;
+}
+
+.forecast-title {
+  color: #B5B5B5;
+  font-weight: bold;
+  letter-spacing: 0.04em;
+}
+
+.forecast-row-bottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+}
+
+.forecast-window {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: #FFFFFF;
+}
+
+.forecast-none {
+  font-size: 10px;
+  color: #777777;
+  letter-spacing: 0.03em;
+}
+
+.jump-btn {
+  background: #000000;
+  color: #FFFFFF;
+  border: 1px solid #555555;
+  padding: 2px 6px;
+  font-family: Georgia, "Times New Roman", Times, serif;
+  font-size: 9px;
+  font-weight: bold;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  border-radius: 0;
+  flex-shrink: 0;
+}
+
+.jump-btn:hover {
+  border-color: #00CC00;
+  color: #00CC00;
+}
+
 /* ---- Mobile / Small Screen fallback ---- */
 @media (max-width: 768px) {
   html, body, #root {
@@ -565,9 +665,11 @@ html, body, #root {
   .map-vector-legend {
     padding: 6px 8px;
     font-size: 9px;
-    max-width: 300px;
-    bottom: 6px;
-    left: 6px;
+    max-width: 280px;
+    top: 6px;
+    right: 6px;
+    bottom: auto;
+    left: auto;
   }
   .legend-item {
     gap: 6px;
