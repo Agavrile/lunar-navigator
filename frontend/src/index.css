@@ -1,7 +1,6 @@
 /* ============================================================
    LUNAR NAVIGATOR — NASA Utilitarian Instrumentation Style
    Pure black, Georgia serif, 1px solid borders, 0px corners
-   NO gradients, NO shadows, NO animations, NO rounded corners
    ============================================================ */
 
 *, *::before, *::after {
@@ -64,6 +63,164 @@ html, body, #root {
 .reset-view-btn:hover {
   background: #111111;
   border-color: #FFFFFF;
+}
+
+/* ---- Bottom-Left Landing Safety Index (LSI) HUD ---- */
+.lsi-hud-card {
+  position: absolute;
+  bottom: 24px;
+  left: 12px;
+  z-index: 10;
+  width: 295px;
+  background: #000000;
+  border: 1px solid #555555;
+  border-radius: 0;
+  padding: 10px 12px;
+  color: #FFFFFF;
+  font-family: Georgia, "Times New Roman", Times, serif;
+  pointer-events: auto;
+}
+
+.lsi-top-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: stretch;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.lsi-title-block {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.lsi-acronym {
+  font-size: 18px;
+  font-weight: bold;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  color: #FFFFFF;
+}
+
+.lsi-subtitle {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: #B5B5B5;
+  margin-top: 3px;
+}
+
+.lsi-index-readout {
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lsi-index-value {
+  font-size: 24px;
+  font-weight: bold;
+  color: #FFFFFF;
+}
+
+.lsi-index-max {
+  font-size: 12px;
+  color: #888888;
+}
+
+/* Flashing GO / NO GO Annunciator Box (1s ON highlighted, 1s OFF) */
+.lsi-decision-box {
+  min-width: 112px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: bold;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  border-radius: 0;
+  padding: 0 10px;
+  user-select: none;
+}
+
+@keyframes flash-go-button {
+  0%, 49.9% {
+    background-color: #00FF00;
+    color: #000000;
+    border: 2px solid #00FF00;
+    box-shadow: 0 0 14px #00FF00, inset 0 0 6px rgba(255, 255, 255, 0.5);
+  }
+  50%, 100% {
+    background-color: #000000;
+    color: #00FF00;
+    border: 2px solid #00FF00;
+    box-shadow: none;
+  }
+}
+
+@keyframes flash-nogo-button {
+  0%, 49.9% {
+    background-color: #FF0000;
+    color: #000000;
+    border: 2px solid #FF0000;
+    box-shadow: 0 0 14px #FF0000, inset 0 0 6px rgba(255, 255, 255, 0.45);
+  }
+  50%, 100% {
+    background-color: #000000;
+    color: #FF0000;
+    border: 2px solid #FF0000;
+    box-shadow: none;
+  }
+}
+
+.lsi-go {
+  animation: flash-go-button 2s steps(1, end) infinite;
+}
+
+.lsi-no-go {
+  animation: flash-nogo-button 2s steps(1, end) infinite;
+}
+
+/* Percentage Bar */
+.lsi-bar-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: #CCCCCC;
+  margin-bottom: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lsi-progress-track {
+  width: 100%;
+  height: 11px;
+  background: #111111;
+  border: 1px solid #555555;
+  border-radius: 0;
+  overflow: hidden;
+}
+
+.lsi-progress-fill {
+  height: 100%;
+}
+
+.lsi-fill-go {
+  background: #00FF00;
+}
+
+.lsi-fill-no {
+  background: #FF0000;
+}
+
+.lsi-breakdown {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 7px;
+  padding-top: 5px;
+  border-top: 1px solid #222222;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: #B5B5B5;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---- Top-Right Map Vector Legend ---- */
@@ -683,5 +840,15 @@ html, body, #root {
     left: 6px;
     padding: 4px 8px;
     font-size: 10px;
+  }
+  .lsi-hud-card {
+    bottom: 6px;
+    left: 6px;
+    width: 245px;
+    padding: 8px 10px;
+  }
+  .lsi-decision-box {
+    min-width: 92px;
+    font-size: 18px;
   }
 }

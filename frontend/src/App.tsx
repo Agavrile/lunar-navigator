@@ -239,6 +239,95 @@ function computeMissionForecast(
 }
 
 /* ============================================================
+   Landing Safety Index (LSI) Composite Calculator (1.0 – 10.0)
+   ============================================================ */
+
+interface LsiResult {
+  score: string;
+  numericScore: number;
+  percent: number;
+  isGo: boolean;
+  solarScore: number;
+  commsScore: number;
+  terrainScore: number;
+}
+
+function computeLandingSafetyIndex(
+  result: AnalyzeResponse | null,
+  forecast: MissionForecast,
+): LsiResult {
+  if (!result) {
+    return {
+      score: '1.0',
+      numericScore: 1.0,
+      percent: 0,
+      isGo: false,
+      solarScore: 0,
+      commsScore: 0,
+      terrainScore: 0,
+    };
+  }
+
+  // 1. Solar Panel Charging (35% weight)
+  const sunStatus = result.sun.power_status;
+  const sunNow =
+    sunStatus === 'OPTIMAL' ? 100 : sunStatus === 'LOW_POWER' ? 65 : 0;
+  const solarScore =
+    0.6 * sunNow + 0.4 * Math.max(0, Math.min(100, forecast.solarPct));
+
+  // 2. Radio Communications & 60% Fresnel Clearance (35% weight)
+  const commsState = result.overall_comms;
+  const dteStatus = result.earth.dte_status;
+  let commsNow = 0;
+  if (commsState === 'DIRECT_DTE' && dteStatus === 'CLEAR') {
+    commsNow = 100;
+  } else if (commsState === 'RELAY_AVAILABLE') {
+    commsNow = 75;
+  } else if (dteStatus === 'DIFFRACTION_WARNING') {
+    commsNow = 65;
+  }
+  const uptime30dPct = Math.max(0, Math.min(100, 100 - forecast.blackoutPct));
+  const commsScore = 0.6 * commsNow + 0.4 * uptime30dPct;
+
+  // 3. Terrain & Horizon Occlusion Relief (20% weight)
+  const maxHorizonDeg = Math.max(
+    0,
+    result.sun.horizon_deg,
+    result.earth.horizon_deg,
+  );
+  const terrainScore = Math.max(10, Math.min(100, 100 - maxHorizonDeg * 3.5));
+
+  // 4. DEM & Ephemeris Lock Confidence (10% weight)
+  const dataScore =
+    result.dem_loaded && result.source === 'LIVE' ? 100 : 75;
+
+  // Weighted Composite Mission Viability (0 - 100%)
+  const rawPct =
+    0.35 * solarScore +
+    0.35 * commsScore +
+    0.20 * terrainScore +
+    0.10 * dataScore;
+
+  const percent = Math.round(Math.max(0, Math.min(100, rawPct)));
+  const numericScore = Number((1.0 + 9.0 * (percent / 100)).toFixed(1));
+
+  // Hard safety interlock: never GO if both power and comms are simultaneously dead
+  const dualBlackout =
+    sunStatus === 'CRITICAL_SHADOW' && commsState === 'COMPLETE_BLACKOUT';
+  const isGo = numericScore >= 6.0 && !dualBlackout;
+
+  return {
+    score: numericScore.toFixed(1),
+    numericScore,
+    percent,
+    isGo,
+    solarScore: Math.round(solarScore),
+    commsScore: Math.round(commsScore),
+    terrainScore: Math.round(terrainScore),
+  };
+}
+
+/* ============================================================
    Colour helpers
    ============================================================ */
 
@@ -692,6 +781,12 @@ export default function App(): React.ReactElement {
     [lat, lon, utcTime, result],
   );
 
+  /* ---- Landing Safety Index (LSI) ---- */
+  const lsi = useMemo(
+    () => computeLandingSafetyIndex(result, forecast),
+    [result, forecast],
+  );
+
   const handleJumpToWindow = (startHour: number) => {
     setPlaying(false);
     const clampedHour = Math.max(0, Math.min(TOTAL_HOURS, startHour));
@@ -1012,6 +1107,42 @@ export default function App(): React.ReactElement {
         </button>
 
         <div className="cesium-container" ref={cesiumContainerRef} />
+
+        {/* Bottom-Left Landing Safety Index (LSI) HUD */}
+        <div className="lsi-hud-card" role="region" aria-label="Landing Safety Index">
+          <div className="lsi-top-row">
+            <div className="lsi-title-block">
+              <div className="lsi-acronym">LSI</div>
+              <div className="lsi-subtitle">LANDING SAFETY INDEX</div>
+              <div className="lsi-index-readout">
+                <span className="lsi-index-value">{lsi.score}</span>
+                <span className="lsi-index-max"> / 10</span>
+              </div>
+            </div>
+
+            <div className={`lsi-decision-box ${lsi.isGo ? 'lsi-go' : 'lsi-no-go'}`}>
+              {lsi.isGo ? 'GO' : 'NO GO'}
+            </div>
+          </div>
+
+          <div className="lsi-bar-header">
+            <span>MISSION VIABILITY</span>
+            <span>{lsi.percent}%</span>
+          </div>
+
+          <div className="lsi-progress-track">
+            <div
+              className={`lsi-progress-fill ${lsi.isGo ? 'lsi-fill-go' : 'lsi-fill-no'}`}
+              style={{ width: `${lsi.percent}%` }}
+            />
+          </div>
+
+          <div className="lsi-breakdown">
+            <span>PWR {lsi.solarScore}%</span>
+            <span>RF {lsi.commsScore}%</span>
+            <span>TER {lsi.terrainScore}%</span>
+          </div>
+        </div>
 
         {/* Top-Right Map Vector Legend */}
         <div className="map-vector-legend" aria-label="Map Vector Legend">
