@@ -5,49 +5,66 @@
 <h1 align="center">Lunar South Pole Landing Site Navigator</h1>
 
 <p align="center">
-  <a href="https://lunar.andreos.org">Live app</a>
-  ·
-  <a href="https://lunar-api.andreos.org/api/v1/analyze">API endpoint</a>
-  ·
-  <a href="https://github.com/Agavrile/lunar-navigator">GitHub repo</a>
+  <strong>Mission Analysis Prototype</strong>
+  <br />
+  Lunar South Pole illumination, terrain obstruction, communications, and landing-site feasibility assessment
 </p>
 
-A React + TypeScript and CesiumJS mission-planning interface paired with a C++17 Crow backend for lunar south-pole landing-site analysis. The project models terrain obstruction, solar illumination, direct-to-Earth line-of-sight, and a simplified relay fallback around a lunar south-pole landing site.
+<p align="center">
+  <a href="https://lunar.andreos.org">Live application</a>
+  ·
+  <a href="https://lunar-api.andreos.org/api/v1/analyze">Telemetry API</a>
+  ·
+  <a href="https://github.com/Agavrile/lunar-navigator">Repository</a>
+</p>
 
-> Important: this repository contains a prototype analysis tool, not a certified flight-planning or safety-critical system. The backend depends on a DEM file supplied at runtime and the frontend contains heuristic fallback logic.
+## Mission Overview
 
-## Architecture
+The Lunar South Pole Landing Site Navigator is a mission-planning and analysis prototype designed to evaluate lunar south-polar landing regions through a compact software stack:
+
+- a React + TypeScript front end for interactive mission visualization,
+- a CesiumJS 3D lunar globe for site assessment and map overlays,
+- a C++17 Crow API for terrain and communications analysis,
+- and a deterministic fallback model for degraded or unavailable live service conditions.
+
+This system is engineered to support operational-style analysis around the lunar south pole, with emphasis on terrain masking, solar illumination conditions, and direct-to-Earth / relay communications viability. The project is intended as a prototype investigation tool and a visualization platform, not as a flight-certified mission-planning system.
+
+> Mission note: all outputs are generated from modeled conditions and are subject to data availability, runtime assumptions, and the accuracy of the terrain DEM and ephemeris inputs used during execution.
+
+## Mission Architecture
 
 ```mermaid
 flowchart LR
-    U[Operator input: lat, lon, UTC, frequency band] --> UI[React + TypeScript UI]
-    UI --> G[CesiumJS Moon globe]
-    UI --> C[frontend/src/api.ts]
-    C --> API[C++ Crow API :9091]
-    API --> DEM[GDAL DEM reader /data/lunar_dem.tif]
-    API --> EPH[JPL Horizons queries + analytical fallback]
-    DEM --> ANALYSIS[Terrain horizon, RF clearance, solar/relay classification]
-    EPH --> ANALYSIS
-    ANALYSIS --> API
-    C -. timeout / fetch failure .-> FALLBACK[TypeScript fallback model]
+    M[Mission Operator] --> UI[React + TypeScript Console]
+    UI --> G[CesiumJS Lunar Globe]
+    UI --> C[Frontend API Client]
+    C --> API[C++ Crow Service :9091]
+    API --> DEM[GDAL DEM Reader]
+    API --> EPH[JPL Horizons + Analytic Fallback]
+    DEM --> A[Terrain Horizon + RF Clearance + Relay Logic]
+    EPH --> A
+    A --> API
+    C -. request timeout or fetch failure .-> F[TypeScript Offline Estimator]
 ```
 
-## Components
+## Mission Systems
 
-### Frontend
-- React 18 + TypeScript + Vite
-- CesiumJS with `Cesium.Ellipsoid.MOON`
-- Lunar UI overlays, crater/rim rendering, and 30-day mission forecast heuristics
-- Debounced API calls from `frontend/src/api.ts`
+### Flight-Deck Frontend
+- CesiumJS rendering on `Cesium.Ellipsoid.MOON`
+- Mission controls for latitude, longitude, UTC epoch, and RF band
+- Time scrubber and heuristic 30-day planning windows
+- Preset south-pole landing sites and scene overlays
 
-### Backend
-- C++17
-- Crow REST server
-- GDAL DEM parsing
-- JPL Horizons HTTP queries with analytical fallback
-- Simplified horizon, Fresnel, relay, and overall communications logic
+### Analysis Backend
+- C++17 service using Crow
+- GDAL terrain sampling from a runtime DEM path
+- JPL Horizons-based celestial querying with analytical fallback
+- Solar elevation, horizon blocking, Fresnel-style clearance, and relay-status classification
 
-## Repository structure
+### Operational Fallback Layer
+When the live API is unavailable or times out, the frontend substitutes a deterministic offline estimator to maintain usability and to approximate mission state for planning workflows.
+
+## Repository Structure
 
 ```text
 backend/
@@ -70,15 +87,38 @@ frontend/
 README.md
 ```
 
-## API behavior
+## Mission Data Flow
 
-The primary endpoint is:
+```mermaid
+sequenceDiagram
+    actor Operator
+    participant UI as React UI
+    participant Client as frontend/src/api.ts
+    participant API as Crow API
+    participant DEM as GDAL DEM
+    participant EPH as JPL Horizons
+
+    Operator->>UI: Select landing site, band, UTC epoch
+    UI->>Client: Debounced analysis request
+    Client->>API: POST /api/v1/analyze
+    API->>DEM: Sample terrain elevation and horizon
+    API->>EPH: Request Sun/Earth positions
+    DEM-->>API: Terrain heights and local obstruction profile
+    EPH-->>API: Topocentric azimuth/elevation values
+    API-->>Client: Analysis JSON payload
+    Client-->>UI: Live or fallback mission state
+    UI->>UI: Render terrain, vectors, telemetry, and forecast
+```
+
+## Mission Payload and Analysis Interface
+
+The main API endpoint is:
 
 ```http
 POST /api/v1/analyze
 ```
 
-Example payload:
+Example request:
 
 ```json
 {
@@ -89,42 +129,95 @@ Example payload:
 }
 ```
 
-The backend expects:
-- `lat`: numeric in `[-90, 90]`
-- `lon`: numeric in `[-180, 360]`
-- `utc_time`: ISO-like UTC string
-- `frequency_band`: string
+Required request fields:
+- `lat`: numeric in the range `[-90, 90]`
+- `lon`: numeric in the range `[-180, 360]`
+- `utc_time`: ISO-like UTC timestamp
+- `frequency_band`: string identifier for RF band selection
 
-The API returns a JSON object with keys like:
+The backend returns a JSON analysis object containing:
 - `site_elevation_m`
 - `dem_loaded`
 - `ephemeris_source`
 - `overall_comms`
-- nested `sun`, `earth`, and `relay` objects
+- nested `sun`, `earth`, and `relay` response blocks
 
-The frontend client adds a `source` field (`LIVE` or `OFFLINE FALLBACK`) on top of the raw response.
+The frontend adds `source` as a client-side property and tags the response as:
+- `LIVE`
+- `OFFLINE FALLBACK`
 
-## Important implementation notes
+## Mission Data Sources and Constraints
 
-### DEM handling
-The backend reads the DEM path from `DEM_PATH` if present; otherwise it defaults to `/data/lunar_dem.tif`.
+### Terrain Data
+The terrain engine reads a DEM file from the runtime environment. If no file is mounted, the backend still starts, but terrain-derived quantities are effectively non-meaningful.
 
-No DEM file is committed in this repository. If the file is not mounted, DEM-derived fields are effectively non-meaningful and the app falls back to a simplified local model.
+The default path is:
 
-### Ephemeris
-The backend does live JPL Horizons calls and falls back to analytic lunar Sun/Earth calculations if the request fails or times out.
+```text
+/data/lunar_dem.tif
+```
 
-### Frequency band handling
-The C++ backend recognizes `S-BAND` and `KA-BAND`; any other string falls through to the default `X_BAND` case. The frontend sends strings like `S_BAND`, `X_BAND`, and `KA_BAND`.
+The repository does not include the DEM asset itself. The actual terrain fidelity depends entirely on the user-supplied raster data.
 
-This means the band strings are currently mismatched between the TypeScript client and the C++ parser; live S/Ka-band values are effectively not being interpreted as the strings implied by the frontend. This is a repo-level implementation detail to be corrected before relying on live multi-band comparisons.
+### Ephemeris Data
+The backend performs live JPL Horizons requests when available and falls back to analytic Sun/Earth models when the request fails or times out.
 
-### Relay and forecast models
-The backend relay evaluation is a deterministic, lightweight model and not a full LunaNet constellation simulation. The frontend 30-day forecast is a browser-side heuristic and should be treated as an estimate rather than a precise operational forecast.
+This gives the system a practical operational mode while preserving a deterministic fallback path.
 
-## Build and run
+### RF Band Interpretation
+The frontend sends band strings in the form:
+- `S_BAND`
+- `X_BAND`
+- `KA_BAND`
 
-### Backend
+The C++ backend recognizes:
+- `S-BAND`
+- `KA-BAND`
+
+Any other string falls through to the default `X_BAND` behavior. This mismatch is an implementation detail that should be corrected before using live multi-band comparisons as a mission-grade reference.
+
+## Science and Engineering Model Notes
+
+### Terrain Horizon Logic
+The terrain engine estimates local horizon blocking by sampling the DEM and evaluating terrain rise along a directional azimuth. This produces a local obstruction profile and a maximum apparent terrain angle at a given azimuth.
+
+### Solar Illumination Logic
+Sun status is derived from:
+- Sun elevation relative to local terrain horizon,
+- local horizon height,
+- and a simplified threshold model for power viability.
+
+The backend uses the following classification logic for solar viability:
+- `OPTIMAL` when the net margin is `>= 5°`
+- `LOW_POWER` when the net margin is `>= 1.5°` and `< 5°`
+- `CRITICAL_SHADOW` otherwise
+
+### Communications Logic
+The system evaluates:
+- Earth elevation relative to the terrain horizon,
+- local obstruction and effective line-of-sight,
+- a simplified Fresnel-style clearance threshold,
+- and relay visibility as a mission fallback.
+
+Status categories include:
+- `CLEAR`
+- `DIFFRACTION_WARNING`
+- `BLOCKED`
+- `DIRECT_DTE`
+- `RELAY_AVAILABLE`
+- `COMPLETE_BLACKOUT`
+
+These are engineering estimates intended for prototype mission analysis. They are not a replacement for a validated RF engineering model or a certified flight operations assessment.
+
+## Mission Planning and Forecasting
+
+The frontend includes a local 30-day forecast using a fixed time window and heuristic calculations. It is designed to provide a quick glance at likely mission conditions but should be interpreted as a conceptual planning aid, not as a high-fidelity predictor.
+
+The forecast window is generated in-browser and is not computed from a full DEM- or Horizons-backed 720-hour model. It is a deterministic approximation useful for UI demonstration and rapid exploration.
+
+## Local Build and Run
+
+### Backend Container
 
 ```bash
 cd backend
@@ -135,7 +228,7 @@ docker run --rm -p 9091:9091 \
   lunar-backend
 ```
 
-### Frontend
+### Frontend Container
 
 ```bash
 cd frontend
@@ -143,7 +236,7 @@ docker build -t lunar-frontend .
 docker run --rm -p 9095:9095 lunar-frontend
 ```
 
-For local development:
+### Local Frontend Development
 
 ```bash
 cd frontend
@@ -151,24 +244,30 @@ npm install
 npm run dev
 ```
 
-## Notes on data provenance and interpretation
+## Mission Readiness Statement
 
-- The frontend references NASA Moon Trek WAC imagery.
-- The backend queries JPL Horizons via libcurl.
-- The repo does not include the actual LOLA DEM data set.
-- The project is designed as a prototype visualization and analysis tool, not a scientific or mission-validation system.
+This repository is a working prototype and research visualization platform for lunar south-pole mission analysis. It demonstrates:
+- lunar terrain-informed site evaluation,
+- ephemeris-based lighting analysis,
+- comms viability classification,
+- and a 3D interactive mission console.
 
-## License and attribution
+It is not yet a mission-validated engineering product, and any operational use should be preceded by further validation against authoritative scientific and engineering data sources.
 
-Project-specific data and model assumptions are embedded in the UI and backend code. The included Moon imagery and orbital/terrain references are used for application context; users should verify any external planetary naming, geodetic, or scientific attribution against the authoritative source material before treating them as mission-grade reference data.
+## Data and Attribution Notes
+
+- NASA Moon Trek WAC imagery is used in the front-end configuration.
+- JPL Horizons is queried for ephemeris information.
+- The repository does not include the actual LOLA DEM product.
+- Any planetary naming, crater geometry, or scientific narratives included in UI text should be verified against authoritative sources before being treated as mission-grade reference data.
 
 ## Summary
 
-This repository contains a working prototype of a lunar south-pole analysis workstation:
-- a Cesium-based 3D lunar globe,
-- a C++ analysis service,
-- per-site terrain and line-of-sight evaluation,
-- a simplified relay model,
-- and a local forecast UI.
+The Lunar South Pole Landing Site Navigator provides a compact lunar mission-analysis environment for exploring terrain, lighting, and communications viability on the lunar south pole. It has been designed to be useful as a prototype, a demonstration platform, and a foundation for further mission-analysis development.
 
-It is well-suited for demo, experimentation, and iterative improvement, but it should not be treated as a final mission-planning system without additional validation, telemetry, and data provenance review.
+The codebase is intentionally modular and operationally transparent:
+- data ingestion is isolated,
+- analysis logic is centered in the backend,
+- and the frontend remains focused on visualization and planning workflows.
+
+This structure supports iteration and validation as the project matures from prototype into a more rigorous mission-analysis tool.
