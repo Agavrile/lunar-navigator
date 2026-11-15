@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="frontend/Retro%20Moon%20Astro%20Punks%20Logo.webp" alt="Lunar South Pole Astro Punks mission logo" width="360" />
+  <img src="frontend/Retro%20Moon%20Astro%20Punks%20Logo%20Stars.png" alt="Lunar South Pole Astro Punks mission logo" width="360" />
 </p>
 
 <h1 align="center">Lunar South Pole Landing Site Navigator</h1>
